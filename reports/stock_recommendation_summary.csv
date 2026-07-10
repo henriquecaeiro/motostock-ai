@@ -1,0 +1,2 @@
+total_products,critical_products,warning_products,healthy_products,overstock_products,total_recommended_purchase_units,highest_priority_product,forecast_horizon_days,selected_model
+12,0,0,3,9,0,Capa de Chuva,14,XGBoost
