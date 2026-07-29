@@ -2,6 +2,7 @@ fastapi
 uvicorn
 pydantic
 python-dotenv
+httpx
 
 numpy
 pandas
@@ -11,6 +12,7 @@ plotly
 
 scikit-learn
 xgboost
+joblib
 
 jupyter
 
