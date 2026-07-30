@@ -179,7 +179,7 @@ class OllamaService:
         messages.append(
             {
                 "role": "user",
-                "content": prompt.strip(),
+                "content": f"{prompt.strip()}\n\n/no_think",
             }
         )
 
@@ -243,13 +243,15 @@ class OllamaService:
 
         content = message.get("content")
 
-        if not isinstance(content, str) or not content.strip():
-            raise OllamaInvalidResponseError(
-                "Ollama returned an empty or invalid answer."
-            )
+        if not isinstance(content, str):
+            raise OllamaInvalidResponseError("Ollama returned an invalid answer.")
 
-        # Only the content required by the application is returned.
-        return content.strip()
+        final_answer = self._extract_final_answer(content)
+
+        if not final_answer:
+            raise OllamaInvalidResponseError("Ollama returned an empty answer.")
+
+        return final_answer
 
     async def _request_json(
         self,
@@ -360,3 +362,22 @@ class OllamaService:
             return response_text[:500]
 
         return "No error details were provided."
+
+    @staticmethod
+    def _extract_final_answer(content: str) -> str:
+        """
+        Remove thinking content accidentally returned inside
+        the assistant message.
+        """
+
+        cleaned_content = content.strip()
+
+        # Some Qwen versions may return the reasoning followed
+        # by a closing </think> tag inside message.content.
+        if "</think>" in cleaned_content:
+            cleaned_content = cleaned_content.rsplit(
+                "</think>",
+                maxsplit=1,
+            )[-1].strip()
+
+        return cleaned_content
