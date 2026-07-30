@@ -5,15 +5,18 @@ from __future__ import annotations
 import logging
 from contextlib import asynccontextmanager
 
+from dotenv import load_dotenv
 from fastapi import FastAPI
 
 from api.repositories.csv_repository import CsvRepository
-from api.routes import health, predictions, products, recommendations
+from api.routes import assistant, health, predictions, products, recommendations
 from api.services.forecast_service import ForecastService
 from api.services.model_service import ModelService
 from api.services.recommendation_service import RecommendationService
 
 logger = logging.getLogger(__name__)
+
+load_dotenv()
 
 
 @asynccontextmanager
@@ -30,7 +33,9 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.exception("Startup initialization encountered an error")
 
-    forecast_service = ForecastService(repository=repository, model_service=model_service)
+    forecast_service = ForecastService(
+        repository=repository, model_service=model_service
+    )
     recommendation_service = RecommendationService(
         repository=repository,
         forecast_service=forecast_service,
@@ -60,6 +65,7 @@ app.include_router(health.router)
 app.include_router(products.router)
 app.include_router(predictions.router)
 app.include_router(recommendations.router)
+app.include_router(assistant.router)
 
 
 @app.get("/", include_in_schema=False)
