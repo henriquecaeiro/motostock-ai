@@ -144,15 +144,15 @@ async def assistant_chat(
             },
         )
 
-    except OllamaModelUnavailableError:
+    except OllamaModelUnavailableError as exc:
         logger.warning(
             "Assistant request failed because the configured model is unavailable: %s",
-            ollama.default_model,
+            exc.model,
         )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=(f"Configured Ollama model is unavailable: {ollama.default_model}"),
-        )
+            detail=f"Configured Ollama model is unavailable: {exc.model}",
+        ) from exc
 
     except OllamaConnectionError:
         logger.warning("Assistant request failed because Ollama is unavailable.")

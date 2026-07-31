@@ -162,11 +162,19 @@ In the current version:
 - it does not query current recommendations
 - it must not invent current business values
 
-Automated assistant tests use mocks and do not require Ollama to be running. For a real integration check, use:
+Automated assistant tests use mocks and do not require Ollama to be running. For a real integration check, run this command from the project root:
 
 ```bash
-python scripts/check_ollama_integration.py
+python -m scripts.check_ollama_integration
 ```
+
+On Windows, you can also use:
+
+```bash
+.venv\Scripts\python.exe -m scripts.check_ollama_integration
+```
+
+The script configures `stdout` and `stderr` as UTF-8 when supported by Python, which helps avoid encoding errors on Windows terminals.
 
 ## Swagger documentation
 

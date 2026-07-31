@@ -22,6 +22,15 @@ class OllamaTimeoutError(OllamaServiceError):
 class OllamaRequestError(OllamaServiceError):
     """Raised when Ollama returns an unsuccessful HTTP status."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
 
 class OllamaInvalidResponseError(OllamaServiceError):
     """Raised when Ollama returns an unexpected response."""
@@ -29,6 +38,10 @@ class OllamaInvalidResponseError(OllamaServiceError):
 
 class OllamaModelUnavailableError(OllamaServiceError):
     """Raised when the configured Ollama model is not installed."""
+
+    def __init__(self, model: str) -> None:
+        self.model = model
+        super().__init__(f"The configured Ollama model is unavailable: {model}")
 
 
 class OllamaService:
@@ -159,9 +172,7 @@ class OllamaService:
         available_models = await self.list_models()
 
         if selected_model not in available_models:
-            raise OllamaModelUnavailableError(
-                f"Configured Ollama model is not installed: {selected_model}"
-            )
+            raise OllamaModelUnavailableError(selected_model)
 
     async def ask(
         self,
@@ -241,11 +252,16 @@ class OllamaService:
         if options:
             payload["options"] = dict(options)
 
-        data = await self._request_json(
-            method="POST",
-            path="/api/chat",
-            json=payload,
-        )
+        try:
+            data = await self._request_json(
+                method="POST",
+                path="/api/chat",
+                json=payload,
+            )
+        except OllamaRequestError as exc:
+            if exc.status_code == 404:
+                raise OllamaModelUnavailableError(selected_model) from exc
+            raise
 
         if data.get("done") is not True:
             raise OllamaInvalidResponseError(
@@ -305,7 +321,8 @@ class OllamaService:
             error_detail = self._extract_error_detail(response)
 
             raise OllamaRequestError(
-                f"Ollama returned HTTP status {response.status_code}: {error_detail}"
+                f"Ollama returned HTTP status {response.status_code}: {error_detail}",
+                status_code=response.status_code,
             ) from exc
 
         try:
