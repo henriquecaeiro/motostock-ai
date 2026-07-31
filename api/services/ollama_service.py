@@ -27,6 +27,10 @@ class OllamaInvalidResponseError(OllamaServiceError):
     """Raised when Ollama returns an unexpected response."""
 
 
+class OllamaModelUnavailableError(OllamaServiceError):
+    """Raised when the configured Ollama model is not installed."""
+
+
 class OllamaService:
     """Service responsible for communicating with the Ollama HTTP API."""
 
@@ -144,6 +148,20 @@ class OllamaService:
         available_models = await self.list_models()
 
         return selected_model in available_models
+
+    async def ensure_model_available(
+        self,
+        model: str | None = None,
+    ) -> None:
+        """Raise when the requested model is not installed in Ollama."""
+
+        selected_model = model or self.default_model
+        available_models = await self.list_models()
+
+        if selected_model not in available_models:
+            raise OllamaModelUnavailableError(
+                f"Configured Ollama model is not installed: {selected_model}"
+            )
 
     async def ask(
         self,

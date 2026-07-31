@@ -59,6 +59,16 @@ class AssistantResponse(BaseModel):
     )
 
 
+class AssistantErrorResponse(BaseModel):
+    """Standard error response for assistant endpoints."""
+
+    detail: str = Field(
+        ...,
+        description="Human-readable error message",
+        examples=["Ollama service is unavailable."],
+    )
+
+
 class AssistantHealthResponse(BaseModel):
     """Health status of the AI assistant dependencies."""
 
