@@ -12,6 +12,7 @@ from api.repositories.csv_repository import CsvRepository
 from api.routes import assistant, health, predictions, products, recommendations
 from api.services.forecast_service import ForecastService
 from api.services.model_service import ModelService
+from api.services.ollama_service import OllamaService
 from api.services.recommendation_service import RecommendationService
 
 logger = logging.getLogger(__name__)
@@ -21,10 +22,11 @@ load_dotenv()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Load model and data access dependencies once at startup."""
+    """Load application dependencies once at startup."""
 
     repository = CsvRepository()
     model_service = ModelService()
+    ollama_service = OllamaService()
 
     try:
         model_service.load()
@@ -34,8 +36,10 @@ async def lifespan(app: FastAPI):
         logger.exception("Startup initialization encountered an error")
 
     forecast_service = ForecastService(
-        repository=repository, model_service=model_service
+        repository=repository,
+        model_service=model_service,
     )
+
     recommendation_service = RecommendationService(
         repository=repository,
         forecast_service=forecast_service,
@@ -46,8 +50,12 @@ async def lifespan(app: FastAPI):
     app.state.model_service = model_service
     app.state.forecast_service = forecast_service
     app.state.recommendation_service = recommendation_service
+    app.state.ollama_service = ollama_service
 
-    yield
+    try:
+        yield
+    finally:
+        await ollama_service.close()
 
 
 app = FastAPI(
