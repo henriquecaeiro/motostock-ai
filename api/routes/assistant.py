@@ -2,7 +2,7 @@
 
 import logging
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 
 from api.prompts import load_system_prompt
@@ -42,56 +42,57 @@ router = APIRouter(
         }
     },
 )
-async def assistant_health() -> AssistantHealthResponse | JSONResponse:
+async def assistant_health(
+    request: Request,
+) -> AssistantHealthResponse | JSONResponse:
     """Check whether Ollama and the configured model are available."""
 
-    async with OllamaService() as ollama:
-        try:
-            available_models = await ollama.list_models()
-        except OllamaServiceError:
-            logger.warning(
-                "Assistant health check failed because Ollama is unavailable."
-            )
+    ollama: OllamaService = request.app.state.ollama_service
 
-            response = AssistantHealthResponse(
-                status="ollama_unavailable",
-                ollama_available=False,
-                model=ollama.default_model,
-                model_available=False,
-            )
+    try:
+        available_models = await ollama.list_models()
+    except OllamaServiceError:
+        logger.warning("Assistant health check failed because Ollama is unavailable.")
 
-            return JSONResponse(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                content=response.model_dump(),
-            )
+        response = AssistantHealthResponse(
+            status="ollama_unavailable",
+            ollama_available=False,
+            model=ollama.default_model,
+            model_available=False,
+        )
 
-        model_available = ollama.default_model in available_models
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content=response.model_dump(),
+        )
 
-        if not model_available:
-            logger.warning(
-                "Assistant health check failed because the configured model "
-                "is unavailable: %s",
-                ollama.default_model,
-            )
+    model_available = ollama.default_model in available_models
 
-            response = AssistantHealthResponse(
-                status="model_unavailable",
-                ollama_available=True,
-                model=ollama.default_model,
-                model_available=False,
-            )
+    if not model_available:
+        logger.warning(
+            "Assistant health check failed because the configured model "
+            "is unavailable: %s",
+            ollama.default_model,
+        )
 
-            return JSONResponse(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                content=response.model_dump(),
-            )
-
-        return AssistantHealthResponse(
-            status="ok",
+        response = AssistantHealthResponse(
+            status="model_unavailable",
             ollama_available=True,
             model=ollama.default_model,
-            model_available=True,
+            model_available=False,
         )
+
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content=response.model_dump(),
+        )
+
+    return AssistantHealthResponse(
+        status="ok",
+        ollama_available=True,
+        model=ollama.default_model,
+        model_available=True,
+    )
 
 
 @router.post(
@@ -117,83 +118,79 @@ async def assistant_health() -> AssistantHealthResponse | JSONResponse:
         },
     },
 )
-async def assistant_chat(request: AssistantRequest) -> AssistantResponse:
+async def assistant_chat(
+    payload: AssistantRequest, request: Request
+) -> AssistantResponse:
     """Send a user message to the MotoStockAI assistant."""
+
+    ollama: OllamaService = request.app.state.ollama_service
 
     try:
         system_prompt = load_system_prompt()
-    except RuntimeError:
-        logger.error(
-            "Assistant request failed because the system prompt could not be loaded."
-        )
+    except RuntimeError as exc:
+        logger.error("Assistant configuration could not be loaded.")
+
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="The assistant configuration could not be loaded.",
+        ) from exc
+
+    try:
+        answer = await ollama.ask(
+            prompt=payload.message,
+            system_prompt=system_prompt,
+            options={
+                "temperature": 0.1,
+            },
         )
 
-    async with OllamaService() as ollama:
-        try:
-            await ollama.ensure_model_available()
-
-            answer = await ollama.ask(
-                prompt=request.message,
-                system_prompt=system_prompt,
-                options={
-                    "temperature": 0.1,
-                },
-            )
-
-        except OllamaModelUnavailableError:
-            logger.warning(
-                "Assistant request failed because the configured model is unavailable: %s",
-                ollama.default_model,
-            )
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail=(
-                    f"Configured Ollama model is unavailable: {ollama.default_model}"
-                ),
-            )
-
-        except OllamaConnectionError:
-            logger.warning(
-                "Assistant request failed because Ollama is unavailable."
-            )
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Ollama service is unavailable.",
-            )
-
-        except OllamaTimeoutError:
-            logger.warning(
-                "Assistant request timed out for model: %s",
-                ollama.default_model,
-            )
-            raise HTTPException(
-                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-                detail="The language model request timed out.",
-            )
-
-        except OllamaInvalidResponseError:
-            logger.error(
-                "Assistant request failed because Ollama returned an invalid response."
-            )
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail="The language model returned an invalid response.",
-            )
-
-        except OllamaRequestError:
-            logger.error(
-                "Assistant request failed because the language model service "
-                "returned an unexpected error."
-            )
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail="The language model service returned an unexpected error.",
-            )
-
-        return AssistantResponse(
-            answer=answer,
-            model=ollama.default_model,
+    except OllamaModelUnavailableError:
+        logger.warning(
+            "Assistant request failed because the configured model is unavailable: %s",
+            ollama.default_model,
         )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(f"Configured Ollama model is unavailable: {ollama.default_model}"),
+        )
+
+    except OllamaConnectionError:
+        logger.warning("Assistant request failed because Ollama is unavailable.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Ollama service is unavailable.",
+        )
+
+    except OllamaTimeoutError:
+        logger.warning(
+            "Assistant request timed out for model: %s",
+            ollama.default_model,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="The language model request timed out.",
+        )
+
+    except OllamaInvalidResponseError:
+        logger.error(
+            "Assistant request failed because Ollama returned an invalid response."
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="The language model returned an invalid response.",
+        )
+
+    except OllamaRequestError:
+        logger.error(
+            "Assistant request failed because the language model service "
+            "returned an unexpected error."
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="The language model service returned an unexpected error.",
+        )
+
+    return AssistantResponse(
+        answer=answer,
+        model=ollama.default_model,
+    )
