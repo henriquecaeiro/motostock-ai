@@ -2,6 +2,7 @@
 
 import asyncio
 
+import httpx
 import pytest
 
 from api.services.ollama_service import (
@@ -41,8 +42,10 @@ def test_ensure_model_available_raises_when_model_is_missing(monkeypatch):
 
     async def run_test() -> None:
         async with OllamaService() as ollama:
-            with pytest.raises(OllamaModelUnavailableError):
+            with pytest.raises(OllamaModelUnavailableError) as exc_info:
                 await ollama.ensure_model_available()
+
+            assert exc_info.value.model == "qwen3:4b"
 
     asyncio.run(run_test())
 
@@ -63,41 +66,38 @@ def test_ensure_model_available_propagates_connection_errors(monkeypatch):
     asyncio.run(run_test())
 
 
-async def main() -> None:
-    async with OllamaService() as ollama:
-        available = await ollama.is_available()
+def test_chat_maps_ollama_404_to_model_unavailable_error():
+    """Map Ollama HTTP 404 responses to OllamaModelUnavailableError."""
 
-        print(f"Ollama available: {available}")
+    missing_model = "qwen3:missing"
 
-        if not available:
-            print("Start Ollama before running this test.")
-            return
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/chat":
+            return httpx.Response(
+                status_code=404,
+                json={"error": f"model '{missing_model}' not found"},
+                headers={"Content-Type": "application/json"},
+            )
 
-        models = await ollama.list_models()
+        raise AssertionError(f"Unexpected request path: {request.url.path}")
 
-        print(f"Installed models: {models}")
+    async def run_test() -> None:
+        async with OllamaService() as ollama:
+            ollama._client = httpx.AsyncClient(
+                transport=httpx.MockTransport(handler),
+                base_url=ollama.base_url,
+                headers={
+                    "Accept": "application/json",
+                    "Content-Type": "application/json",
+                },
+            )
 
-        if not await ollama.has_model():
-            print(f"Required model is not installed: {ollama.default_model}")
-            return
+            with pytest.raises(OllamaModelUnavailableError) as exc_info:
+                await ollama.chat(
+                    messages=[{"role": "user", "content": "Hello"}],
+                    model=missing_model,
+                )
 
-        answer = await ollama.ask(
-            prompt=(
-                "Explain safety stock in one short sentence. "
-                "Return only the explanation."
-            ),
-            system_prompt=("You are a concise inventory assistant."),
-            options={
-                "temperature": 0.2,
-            },
-        )
+            assert exc_info.value.model == missing_model
 
-        print("\nModel answer:")
-        print(answer)
-
-
-if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except OllamaServiceError as exc:
-        print(f"Ollama error: {exc}")
+    asyncio.run(run_test())

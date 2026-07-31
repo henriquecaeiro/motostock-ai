@@ -345,7 +345,8 @@ def test_assistant_chat_returns_503_when_model_is_unavailable(
     """Return HTTP 503 when the configured model is not installed."""
 
     ollama = _ollama_service(client)
-    monkeypatch.setattr(ollama, "default_model", "qwen3:4b")
+    configured_model = "qwen3:missing"
+    monkeypatch.setattr(ollama, "default_model", configured_model)
 
     async def mock_ask(
         prompt,
@@ -354,9 +355,7 @@ def test_assistant_chat_returns_503_when_model_is_unavailable(
         model=None,
         options=None,
     ):
-        raise OllamaModelUnavailableError(
-            "Configured Ollama model is not installed: qwen3:4b"
-        )
+        raise OllamaModelUnavailableError(configured_model)
 
     monkeypatch.setattr(ollama, "ask", mock_ask)
 
@@ -369,7 +368,7 @@ def test_assistant_chat_returns_503_when_model_is_unavailable(
 
     assert response.status_code == 503
     assert response.json() == {
-        "detail": "Configured Ollama model is unavailable: qwen3:4b",
+        "detail": f"Configured Ollama model is unavailable: {configured_model}",
     }
 
 
@@ -483,9 +482,7 @@ def test_assistant_chat_model_unavailable_uses_configured_model_name(
         model=None,
         options=None,
     ):
-        raise OllamaModelUnavailableError(
-            f"Configured Ollama model is not installed: {configured_model}"
-        )
+        raise OllamaModelUnavailableError(configured_model)
 
     monkeypatch.setattr(ollama, "ask", mock_ask)
 
