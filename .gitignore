@@ -4,6 +4,7 @@ __pycache__/
 .pytest_cache/
 .ipynb_checkpoints/
 data/processed/*
+!data/processed/.gitkeep
 storage/rag/*
 !storage/rag/.gitkeep
 *.npz
