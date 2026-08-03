@@ -12,17 +12,19 @@ The evaluation used aggregate error metrics to compare how closely each model's 
 
 | Metric | Result |
 |---|---:|
-| MAE | 1.30 |
-| RMSE | 1.82 |
-| MAPE | 60.31% |
+| MAE | 1.321885 |
+| RMSE | 1.849646 |
+| MAPE | 63.501327% |
+| WAPE | 81.850435% |
 
 ### XGBoost
 
 | Metric | Result |
 |---|---:|
-| MAE | 1.27 |
-| RMSE | 1.83 |
-| MAPE | 59.56% |
+| MAE | 1.296611 |
+| RMSE | 1.869340 |
+| MAPE | 62.575466% |
+| WAPE | 80.285498% |
 
 ## Model Selection
 
@@ -30,12 +32,13 @@ XGBoost was selected as the primary forecasting model because it achieved:
 
 - the lower MAE;
 - the lower MAPE.
+- the lower WAPE.
 
 Random Forest achieved a slightly lower RMSE:
 
 ```text
-Random Forest RMSE: 1.82
-XGBoost RMSE:       1.83
+Random Forest RMSE: 1.849646
+XGBoost RMSE:       1.869340
 ```
 
 The difference between the models was small.
@@ -82,11 +85,11 @@ A product-level analysis identified underprediction for `Bag Delivery 45L`.
 
 ```text
 Actual total:    402.00 units
-Predicted total: 323.41 units
-Underprediction:  78.59 units
+Predicted total: 338.206726 units
+Underprediction:  63.793274 units
 ```
 
-The model predicted 78.59 fewer units than the observed total for the evaluated period.
+The model predicted 63.793274 fewer units than the observed total for the evaluated period.
 
 This example shows that acceptable aggregate metrics do not guarantee equally reliable predictions for every product.
 
