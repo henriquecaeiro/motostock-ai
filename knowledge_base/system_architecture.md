@@ -2,157 +2,109 @@
 
 ## Overview
 
-MotoStock AI separates forecasting, stock recommendation, data access, API delivery, knowledge retrieval, and natural-language interaction into distinct responsibilities.
+MotoStock AI separates forecasting, stock recommendation, operational data
+access, API delivery, knowledge retrieval and natural-language interaction.
+The current default backend is SQLite, while CSV remains the reproducible
+source used to prepare and import the demo data.
 
-This separation keeps the system easier to understand, test, maintain, and extend.
+The responsibilities are explicit:
 
-## Main Components
+- XGBoost predicts daily product demand.
+- The recommendation engine calculates replenishment quantities and stock
+  status.
+- SQLite stores current operational data and persisted results.
+- RAG provides documented project knowledge.
+- Read-only tools provide current business values from application services.
+- The local LLM explains documented knowledge and presents verified tool output.
+- FastAPI validates requests and exposes the workflow over HTTP.
 
-### XGBoost Forecasting Model
-
-The XGBoost model predicts future product demand.
-
-Its responsibilities are to:
-
-- receive prepared forecasting features;
-- generate daily demand predictions;
-- support recursive multi-day forecasting;
-- return continuous forecast values.
-
-The forecasting model does not decide how much stock should be purchased.
-
-### Recommendation Engine
-
-The recommendation engine converts forecast results into stock replenishment information.
-
-Its responsibilities are to combine:
-
-- forecasted demand;
-- safety stock;
-- current stock;
-- supplier lead time;
-- stock classification rules;
-- priority rules.
-
-It calculates required stock, recommended purchase quantity, stock status, and priority score.
-
-### FastAPI
-
-FastAPI exposes the system through HTTP endpoints.
-
-Its responsibilities are to:
-
-- validate request data;
-- call application services;
-- return structured responses;
-- map internal failures to safe HTTP responses;
-- document the API through OpenAPI and Swagger.
-
-FastAPI does not perform model training and should not contain forecasting or recommendation business logic.
-
-### RAG
-
-Retrieval-Augmented Generation, or RAG, retrieves relevant information from the curated MotoStock AI knowledge base.
-
-Its responsibility is to provide static documented knowledge about:
-
-- the business problem;
-- system architecture;
-- forecasting behavior;
-- model evaluation;
-- stock recommendation rules;
-- known limitations;
-- technical terminology.
-
-RAG must not be used as a source of current inventory, current forecasts, or current recommendations.
-
-### Local LLM
-
-The local language model explains system concepts and interacts with users in natural language.
-
-Its responsibilities are to:
-
-- answer conceptual questions;
-- explain retrieved documentation;
-- communicate model and business limitations;
-- present tool results in a user-friendly format when tools are available.
-
-The LLM must not invent current business data.
-
-## Current Application Architecture
-
-The current application uses CSV-backed data access:
+## Main application flow
 
 ```text
-CSV files
+Raw CSV
     ↓
-Repository
+Deterministic preparation
     ↓
-Services
+SQLite repository
     ↓
-FastAPI
+Forecast and recommendation services
+    ↓
+FastAPI endpoints
 ```
 
-### Repository
+The API can also use a read-only CSV repository when `DATA_BACKEND=csv` is
+selected. The repository contract keeps storage details out of forecasting and
+recommendation code.
 
-The repository reads and validates the CSV-backed datasets.
+## Forecast and recommendation components
 
-It isolates file access from forecasting and recommendation logic.
+### XGBoost forecasting model
 
-### Services
+The XGBoost pipeline receives calendar, lag, rolling and product features and
+returns continuous daily demand predictions. Serving uses recursive forecasting
+for the requested horizon. The model does not decide how much stock to buy.
 
-The service layer contains application behavior and coordinates model inference, forecasting, stock recommendation, and Ollama communication.
+### Recommendation engine
 
-Examples include:
+The recommendation engine clips negative demand to zero, aggregates the
+horizon, applies 20% safety stock, compares required stock with current stock
+and calculates status, purchase quantity, lead-time context and priority.
 
-- ModelService;
-- ForecastService;
-- RecommendationService;
-- OllamaService;
-- EmbeddingService;
-- VectorStoreService;
-- RagService.
+### SQLite operational layer
 
-### FastAPI Endpoints
+SQLite stores products, suppliers, sales, inventory snapshots, modeling rows,
+recommendation runs, stock recommendations, model versions and application
+runs. Sales writes are validated, transactional and idempotent. Refresh
+rebuilds features and persists a completed run under a deterministic key.
 
-The API exposes products, forecasts, stock recommendations, assistant health, and assistant chat functionality.
-
-## Knowledge Interaction Flow
-
-The RAG flow is:
+## RAG flow
 
 ```text
 User question
     ↓
 EmbeddingService
     ↓
-VectorStoreService and cosine search
+Local NumPy vector search
     ↓
-Relevant document chunks and source metadata
+Relevant Markdown chunks and source metadata
     ↓
-System prompt, retrieved context and user question
+Bounded, explicitly untrusted context
     ↓
-Local LLM
+Local Ollama chat model
     ↓
 Grounded explanation
 ```
 
-## Future SQLite Migration
+The curated knowledge base covers the business problem, architecture,
+forecasting model, evaluation, recommendation rules, limitations and glossary.
+RAG is not a source of current inventory, forecasts or recommendation values.
 
-The current repository reads operational data from CSV files.
+## Assistant tools
 
-A future version may replace CSV-backed persistence with SQLite:
+The assistant uses deterministic intent rules and four allowlisted read-only
+tools:
 
-```text
-SQLite
-    ↓
-Repository
-    ↓
-Services
-    ↓
-FastAPI
-```
+- `list_products`;
+- `forecast_product`;
+- `get_recommendations`;
+- `get_recommendation_summary`.
 
-The repository abstraction allows the storage implementation to change without moving database logic into the forecasting, recommendation, or API layers.
+Tool arguments use strict Pydantic validation. Tool output is serialized from
+application services and returned with `tools_used`; the LLM does not invent
+current business values or execute arbitrary code.
 
-SQLite is a planned persistence improvement. It is not part of the current CSV-backed architecture unless explicitly implemented.
+## Model operations
+
+Training is separate from serving. A candidate is trained on a temporal split,
+evaluated against the production artifact, checked by global/product gates and
+only promoted by an explicit administrative command. Candidate artifacts never
+silently replace the production model. Rollback uses the recorded parent
+version and a backup.
+
+## API layers
+
+FastAPI validates request and response schemas, maps internal failures to safe
+HTTP details and exposes OpenAPI/Swagger. Routes call services; services call
+repositories and model/LLM adapters. This keeps database, forecast, stock-rule
+and assistant behavior testable without putting business logic in route
+functions.

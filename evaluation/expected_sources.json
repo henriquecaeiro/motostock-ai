@@ -9,6 +9,6 @@
   },
   "rag-architecture-en": {
     "sources": ["system_architecture.md"],
-    "sections": ["RAG", "Local LLM"]
+    "sections": ["RAG flow"]
   }
 }
