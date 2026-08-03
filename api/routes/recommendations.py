@@ -1,6 +1,6 @@
 """Stock recommendation endpoints."""
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request, status
 
 from api.schemas.recommendation import (
     RecommendationsResponse,
@@ -8,6 +8,29 @@ from api.schemas.recommendation import (
 )
 
 router = APIRouter(tags=["Recommendations"])
+
+
+@router.get(
+    "/recommendations/latest",
+    response_model=RecommendationsResponse,
+    summary="Read the latest persisted recommendations",
+    description=(
+        "Return the most recent completed recommendation run stored by the "
+        "configured repository."
+    ),
+)
+def get_latest_recommendations(
+    request: Request,
+    horizon_days: int | None = Query(default=None, ge=1, le=30),
+) -> dict:
+    repository = request.app.state.repository
+    payload = repository.get_latest_recommendations(horizon_days=horizon_days)
+    if payload is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No persisted recommendation run is available.",
+        )
+    return dict(payload)
 
 
 @router.get(

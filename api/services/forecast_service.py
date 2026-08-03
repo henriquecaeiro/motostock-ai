@@ -12,7 +12,7 @@ from src.forecasting import (
 )
 
 from api.exceptions import ForecastingHTTPError, ProductNotFoundError
-from api.repositories.csv_repository import CsvRepository
+from api.repositories.protocol import DataRepository
 from api.services.model_service import ModelService
 
 logger = logging.getLogger(__name__)
@@ -23,7 +23,7 @@ class ForecastService:
 
     def __init__(
         self,
-        repository: CsvRepository,
+        repository: DataRepository,
         model_service: ModelService,
     ) -> None:
         self.repository = repository

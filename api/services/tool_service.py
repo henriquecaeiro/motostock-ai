@@ -21,7 +21,7 @@ from api.exceptions import (
 from api.schemas.recommendation import StockStatus
 from api.services.forecast_service import ForecastService
 from api.services.recommendation_service import RecommendationService
-from api.repositories.csv_repository import CsvRepository
+from api.repositories.protocol import DataRepository
 
 
 ToolName = Literal[
@@ -214,7 +214,7 @@ class ToolService:
 
     def __init__(
         self,
-        repository: CsvRepository,
+        repository: DataRepository,
         forecast_service: ForecastService,
         recommendation_service: RecommendationService,
     ) -> None:

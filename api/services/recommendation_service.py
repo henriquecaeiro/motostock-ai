@@ -11,7 +11,7 @@ from src.recommendation import generate_stock_recommendations
 
 from api.config import DEFAULT_LEAD_TIME_DAYS, SELECTED_MODEL_NAME, VALID_STOCK_STATUSES
 from api.exceptions import ProductNotFoundError, RecommendationHTTPError
-from api.repositories.csv_repository import CsvRepository
+from api.repositories.protocol import DataRepository
 from api.services.forecast_service import ForecastService
 from api.services.model_service import ModelService
 
@@ -23,7 +23,7 @@ class RecommendationService:
 
     def __init__(
         self,
-        repository: CsvRepository,
+        repository: DataRepository,
         forecast_service: ForecastService,
         model_service: ModelService,
     ) -> None:
@@ -91,13 +91,15 @@ class RecommendationService:
 
         recommendations = self._dataframe_to_records(recommendations_df)
 
-        return {
+        response = {
             "generated_at": datetime.now(timezone.utc),
             "selected_model": self.model_service.selected_model,
             "horizon_days": horizon_days,
             "count": len(recommendations),
             "recommendations": recommendations,
         }
+        self.repository.save_recommendations(response)
+        return response
 
     def get_summary(self, horizon_days: int = 14) -> dict:
         """Return summary counts derived from the current recommendations."""

@@ -4,7 +4,7 @@ AI-powered demand forecasting and stock replenishment system for motorcycle and 
 
 ## Project objective
 
-MotoStock AI helps small retail stores estimate future product demand and decide when to reorder stock. The current phase exposes a FastAPI inference API that serves predictions and replenishment recommendations from processed CSV data and a saved XGBoost model.
+MotoStock AI helps small retail stores estimate future product demand and decide when to reorder stock. The FastAPI API serves predictions and replenishment recommendations from a saved XGBoost model, with SQLite as the operational backend and CSV retained for repeatable imports and development.
 
 ## Current ML model
 
@@ -21,13 +21,13 @@ api/
   routes/                 # HTTP endpoints
   schemas/                # Pydantic request/response models
   services/               # Forecasting and recommendation logic
-  repositories/           # CSV data access (replaceable later)
+  repositories/           # CSV and SQLite data access behind one contract
 src/
   forecasting.py          # Reusable recursive forecasting logic
   recommendation.py       # Stock recommendation business rules
 ```
 
-The route layer stays thin. Services orchestrate forecasting and recommendations. The CSV repository can later be replaced by a SQLite repository without rewriting the API routes.
+The route layer stays thin. Services orchestrate forecasting and recommendations. `DataRepository` keeps the API independent from whether data came from CSV or SQLite.
 
 ## Installation
 
@@ -52,6 +52,40 @@ uvicorn api.main:app --reload
 ```
 
 The API will be available at `http://127.0.0.1:8000`.
+
+For the operational SQLite mode, configure the backend before starting the API:
+
+```env
+DATA_BACKEND=sqlite
+DATABASE_PATH=storage/motostock.db
+AUTO_IMPORT_CSV=true
+```
+
+When the configured SQLite file is empty and the processed CSV files exist, the
+application imports them once at startup. The database file is ignored by Git.
+
+### SQLite data layer
+
+The database schema is versioned and includes products, suppliers, sales,
+inventory snapshots, modeling rows, recommendation runs, persisted stock
+recommendations, and model metadata. Foreign keys, check constraints and
+indexes are enabled at connection time.
+
+Initialize and import explicitly when a controlled data step is preferred:
+
+```bash
+# Windows
+.venv\\Scripts\\python.exe -m scripts.init_database
+.venv\\Scripts\\python.exe -m scripts.import_csv_data
+
+# Linux/macOS
+python -m scripts.init_database
+python -m scripts.import_csv_data
+```
+
+The import is transactional and idempotent. Historical zero-demand days are
+preserved; new operational sales still require a positive quantity and a
+non-negative price. Set `DATA_BACKEND=csv` to use the read-only CSV repository.
 
 ## Running tests
 
@@ -265,6 +299,7 @@ After starting the API, open:
 | GET | `/products` | List known products |
 | POST | `/predict` | Forecast demand for one product |
 | GET | `/recommendations` | Generate stock recommendations for all products |
+| GET | `/recommendations/latest` | Read the latest persisted recommendation run |
 | GET | `/recommendations/summary` | Summary counts from the current recommendations |
 | GET | `/assistant/health` | Check Ollama and configured model availability |
 | POST | `/assistant/chat` | Send a message to the local AI assistant |
@@ -305,9 +340,12 @@ curl http://127.0.0.1:8000/recommendations/summary
 
 ## Current data source
 
-The API currently reads from CSV files:
+The default example configuration uses SQLite at `storage/motostock.db`. The
+processed CSV files remain the reproducible import source:
 
 - `data/processed/modeling_dataset.csv`
 - `data/processed/daily_product_sales.csv`
 
-SQLite integration, sales ingestion endpoints, and model retraining will be implemented in a later phase.
+The current branch includes the database foundation and persisted
+recommendation runs. Sales ingestion endpoints, incremental refresh and model
+retraining remain separate operational phases.

@@ -7,3 +7,7 @@ data/processed/*
 storage/rag/*
 !storage/rag/.gitkeep
 *.npz
+storage/*.db
+storage/*.sqlite
+storage/*.sqlite3
+storage/database/*
