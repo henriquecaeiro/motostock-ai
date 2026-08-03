@@ -8,12 +8,20 @@ from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 from fastapi import FastAPI
 
+from api.config import load_settings
 from api.repositories.csv_repository import CsvRepository
 from api.routes import assistant, health, predictions, products, recommendations
+from api.services.embedding_service import EmbeddingService
 from api.services.forecast_service import ForecastService
 from api.services.model_service import ModelService
+from api.services.rag_service import RagService
 from api.services.ollama_service import OllamaService
 from api.services.recommendation_service import RecommendationService
+from api.services.vector_store_service import (
+    VectorStoreCorruptedError,
+    VectorStoreNotFoundError,
+    VectorStoreService,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -24,9 +32,10 @@ load_dotenv()
 async def lifespan(app: FastAPI):
     """Load application dependencies once at startup."""
 
+    settings = load_settings()
     repository = CsvRepository()
     model_service = ModelService()
-    ollama_service = OllamaService()
+    ollama_service = OllamaService(settings=settings)
 
     try:
         model_service.load()
@@ -46,11 +55,34 @@ async def lifespan(app: FastAPI):
         model_service=model_service,
     )
 
+    vector_store_service = VectorStoreService(settings=settings)
+
+    try:
+        vector_store_service.load_index()
+    except VectorStoreNotFoundError:
+        logger.warning("RAG index is unavailable; assistant retrieval is disabled.")
+    except VectorStoreCorruptedError:
+        logger.error("RAG index is invalid; assistant retrieval is disabled.")
+
+    embedding_service = EmbeddingService(
+        ollama_service,
+        settings=settings,
+    )
+    rag_service = RagService(
+        embedding_service,
+        vector_store_service,
+        settings=settings,
+    )
+
+    app.state.settings = settings
     app.state.repository = repository
     app.state.model_service = model_service
     app.state.forecast_service = forecast_service
     app.state.recommendation_service = recommendation_service
     app.state.ollama_service = ollama_service
+    app.state.embedding_service = embedding_service
+    app.state.vector_store_service = vector_store_service
+    app.state.rag_service = rag_service
 
     try:
         yield

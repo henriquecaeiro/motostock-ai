@@ -42,6 +42,9 @@ class RagService:
         if not normalized_query:
             raise ValueError("RAG query cannot be empty.")
 
+        if self.vector_store_service.index_info is None:
+            self.vector_store_service.load_index()
+
         query_embedding = await self.embedding_service.embed_text(normalized_query)
         results = self.vector_store_service.search(
             query_embedding,

@@ -26,6 +26,15 @@ class AssistantRequest(BaseModel):
     )
 
 
+class AssistantSource(BaseModel):
+    """Stable provenance metadata returned for retrieved knowledge."""
+
+    source: str = Field(..., min_length=1)
+    section: str = Field(..., min_length=1)
+    chunk_id: str = Field(..., min_length=1)
+    score: float = Field(..., ge=-1.0, le=1.0)
+
+
 class AssistantResponse(BaseModel):
     """Response returned by the MotoStock AI assistant."""
 
@@ -53,9 +62,9 @@ class AssistantResponse(BaseModel):
         description="Names of the tools used to generate the answer",
     )
 
-    sources: list[str] = Field(
+    sources: list[AssistantSource] = Field(
         default_factory=list,
-        description="Sources used to support the answer",
+        description="Document chunks used to support the answer",
     )
 
 
