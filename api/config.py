@@ -42,7 +42,7 @@ class Settings:
     rag_max_top_k: int = 10
     rag_min_score: float | None = 0.40
     rag_max_context_chars: int = 6000
-    data_backend: str = "csv"
+    data_backend: str = "sqlite"
     database_path: Path = DATABASE_PATH
     auto_import_csv: bool = True
 

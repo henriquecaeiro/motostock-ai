@@ -156,3 +156,15 @@ class CsvRepository:
         raise ServiceUnavailableError(
             "Sales ingestion requires DATA_BACKEND=sqlite."
         )
+
+    def rebuild_modeling_data(self):
+        """Feature rebuilding is intentionally a SQLite operational action."""
+
+        raise ServiceUnavailableError(
+            "Operational refresh requires DATA_BACKEND=sqlite."
+        )
+
+    def record_application_run(self, **kwargs) -> None:
+        """CSV has no durable job-run table."""
+
+        return None

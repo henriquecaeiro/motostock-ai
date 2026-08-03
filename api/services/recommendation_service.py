@@ -78,7 +78,7 @@ class RecommendationService:
                 from fastapi import HTTPException, status
 
                 raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                     detail=(
                         f"Invalid stock_status '{stock_status}'. "
                         f"Allowed values: {', '.join(VALID_STOCK_STATUSES)}"
