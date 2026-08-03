@@ -40,8 +40,13 @@ python -m venv .venv
 # Linux/macOS
 source .venv/bin/activate
 
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 ```
+
+`requirements.txt` contains the runtime dependencies. The development file
+adds pytest, notebooks and visualisation packages. The version ranges keep the
+FastAPI/Pydantic v2 and scientific Python stack compatible without pretending
+to be a full lock file.
 
 ## Running the API
 
@@ -74,11 +79,15 @@ indexes are enabled at connection time.
 Initialize and import explicitly when a controlled data step is preferred:
 
 ```bash
+# Prepare ignored serving CSVs from the tracked raw dataset
+.venv\\Scripts\\python.exe -m scripts.prepare_data
+
 # Windows
 .venv\\Scripts\\python.exe -m scripts.init_database
 .venv\\Scripts\\python.exe -m scripts.import_csv_data
 
 # Linux/macOS
+python -m scripts.prepare_data
 python -m scripts.init_database
 python -m scripts.import_csv_data
 ```
@@ -131,9 +140,28 @@ fidelity remain manual review items rather than a fabricated accuracy score.
 ## Running tests
 
 ```bash
-python -m pytest tests/test_assistant.py -q
+# Fast unit-oriented checks
+python -m pytest -m "not integration and not e2e and not manual" -q
+
+# SQLite/API integration checks
+python -m pytest -m integration -q
+
+# Complete workflow with a temporary SQLite database
+python -m pytest -m e2e -q
+
+# Full local suite; the real Ollama check remains skipped by default
 python -m pytest -q
 ```
+
+The opt-in real Ollama check is kept outside the quick suite:
+
+```powershell
+$env:RUN_OLLAMA_TESTS="1"
+python -m pytest -m manual -q
+python -m scripts.check_ollama_integration
+```
+
+On Linux/macOS, use `RUN_OLLAMA_TESTS=1 python -m pytest -m manual -q`.
 
 ## Local AI Assistant
 

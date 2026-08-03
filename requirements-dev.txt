@@ -1,0 +1,10 @@
+-r requirements.txt
+
+# Starlette 1.x uses httpx2 for its TestClient.
+httpx2>=2.9,<3
+pytest>=8,<10
+
+# Notebook and visualization dependencies are development-only.
+matplotlib>=3.8,<4
+plotly>=5.20,<7
+jupyter>=1,<2

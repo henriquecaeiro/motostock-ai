@@ -13,6 +13,7 @@ MODEL_PATH = PROJECT_ROOT / "artifacts" / "models" / "xgboost_model.pkl"
 MODELING_DATA_PATH = PROJECT_ROOT / "data" / "processed" / "modeling_dataset.csv"
 DAILY_SALES_PATH = PROJECT_ROOT / "data" / "processed" / "daily_product_sales.csv"
 KNOWLEDGE_BASE_DIR = PROJECT_ROOT / "knowledge_base"
+RAW_DATA_PATH = PROJECT_ROOT / "data" / "raw" / "motoretail.csv"
 DATABASE_PATH = PROJECT_ROOT / "storage" / "motostock.db"
 
 SELECTED_MODEL_NAME = "xgboost"

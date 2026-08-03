@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 from fastapi.testclient import TestClient
+import pytest
 
 from api.main import app
+
+
+pytestmark = pytest.mark.integration
 
 
 def test_sales_endpoint_validates_keys_and_is_idempotent(tmp_path, monkeypatch) -> None:

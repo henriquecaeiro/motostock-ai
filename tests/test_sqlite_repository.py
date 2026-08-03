@@ -13,6 +13,9 @@ from api.repositories.sqlite_import import import_csv_files
 from api.repositories.sqlite_repository import SqliteRepository
 
 
+pytestmark = pytest.mark.integration
+
+
 @pytest.fixture
 def sqlite_repository(tmp_path: Path) -> tuple[SqliteRepository, dict]:
     daily_path = tmp_path / "daily_product_sales.csv"
