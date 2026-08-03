@@ -1,0 +1,14 @@
+{
+  "rag-model-selection-en": {
+    "sources": ["model_evaluation.md"],
+    "sections": ["Model Selection"]
+  },
+  "rag-safety-stock-pt": {
+    "sources": ["stock_recommendation_rules.md"],
+    "sections": ["Safety Stock"]
+  },
+  "rag-architecture-en": {
+    "sources": ["system_architecture.md"],
+    "sections": ["RAG flow"]
+  }
+}

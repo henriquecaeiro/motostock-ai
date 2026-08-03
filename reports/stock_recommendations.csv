@@ -1,0 +1,13 @@
+product_name,forecast_horizon_days,forecasted_demand_raw,forecasted_demand_non_negative,forecasted_demand_units,current_stock,safety_stock,required_stock,recommended_purchase_quantity,supplier_lead_time_days,stock_status,priority_score
+Suporte Celular Moto,14,50.562013149261475,50.562013149261475,51,60,11,62,2,3,warning,100
+Bag Delivery 45L,14,47.96294808387756,47.96294808387756,48,109,10,58,0,5,overstock,0
+Bag Delivery 80L,14,24.289849638938904,24.289849638938904,25,108,5,30,0,9,overstock,0
+Balaclava,14,14.001883745193481,14.001883745193481,15,59,3,18,0,10,overstock,0
+Baú Moto 30L,14,19.775356650352478,19.775356650352478,20,63,4,24,0,5,overstock,0
+Capa de Chuva,14,37.58900797367096,37.58900797367096,38,104,8,46,0,6,overstock,0
+Capacete LS2,14,6.045690327882767,6.045690327882767,7,38,2,9,0,10,overstock,0
+Capacete Pro Tork,14,28.329034566879272,28.329034566879272,29,100,6,35,0,4,overstock,0
+Carregador USB Moto,14,12.844501912593842,12.844501912593842,13,95,3,16,0,8,overstock,0
+Intercomunicador,14,3.2978899478912354,3.2978899478912354,4,94,1,5,0,6,overstock,0
+Luva Motoboy,14,45.764089822769165,45.764089822769165,46,117,10,56,0,10,overstock,0
+Retrovisor Esportivo,14,9.385181844234467,9.385181844234467,10,52,2,12,0,3,overstock,0

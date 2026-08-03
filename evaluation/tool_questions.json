@@ -1,0 +1,44 @@
+[
+  {
+    "id": "tool-list-products",
+    "question": "List products",
+    "expected_tool": "list_products",
+    "expected_arguments": {}
+  },
+  {
+    "id": "tool-forecast-product",
+    "question": "Forecast Bag Delivery 45L for 7 days",
+    "expected_tool": "forecast_product",
+    "expected_arguments": {
+      "product_name": "Bag Delivery 45L",
+      "horizon_days": 7
+    }
+  },
+  {
+    "id": "tool-critical-recommendations-pt",
+    "question": "Mostre as recomendacoes criticas atuais",
+    "expected_tool": "get_recommendations",
+    "expected_arguments": {
+      "horizon_days": 14,
+      "stock_status": "critical"
+    }
+  },
+  {
+    "id": "tool-summary",
+    "question": "Show recommendation summary",
+    "expected_tool": "get_recommendation_summary",
+    "expected_arguments": {
+      "horizon_days": 14
+    }
+  },
+  {
+    "id": "tool-mixed-question",
+    "question": "Why is the current recommendation for Bag Delivery 45L important?",
+    "expected_tool": "get_recommendations",
+    "expected_arguments": {
+      "horizon_days": 14,
+      "product_name": "Bag Delivery 45L"
+    },
+    "requires_rag": true
+  }
+]
