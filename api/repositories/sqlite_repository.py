@@ -179,12 +179,13 @@ class SqliteRepository:
             FROM inventory AS i
             JOIN products AS p ON p.product_id = i.product_id
             JOIN (
-                SELECT product_id, MAX(as_of_date) AS latest_date
+                SELECT product_id, MAX(observed_at) AS latest_observed_at
                 FROM inventory
                 GROUP BY product_id
             ) AS latest
                 ON latest.product_id = i.product_id
-               AND latest.latest_date = i.as_of_date
+               AND latest.latest_observed_at = i.observed_at
+            ORDER BY i.inventory_id DESC
             """
         )
         latest_by_product = {
@@ -480,19 +481,18 @@ class SqliteRepository:
                             """
                             INSERT INTO inventory(
                                 product_id, quantity_on_hand, supplier_lead_time_days,
-                                as_of_date, source_key, created_at, updated_at
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                            ON CONFLICT(product_id, as_of_date) DO UPDATE SET
-                                quantity_on_hand = excluded.quantity_on_hand,
-                                supplier_lead_time_days = excluded.supplier_lead_time_days,
-                                source_key = excluded.source_key,
-                                updated_at = excluded.updated_at
+                                as_of_date, observed_at, external_id, idempotency_key,
+                                source_key, created_at, updated_at
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                             """,
                             (
                                 int(product[0]),
                                 current_stock,
                                 max(1, lead_time),
                                 sale_date,
+                                f"{sale_date}T00:00:00+00:00",
+                                external_id,
+                                idempotency_key,
                                 f"{source_key}:inventory",
                                 timestamp,
                                 timestamp,
@@ -512,6 +512,142 @@ class SqliteRepository:
             "inserted": len(inserted_ids),
             "skipped": skipped,
             "sale_ids": inserted_ids,
+        }
+
+    def insert_inventory_snapshots(
+        self, records: Sequence[Mapping[str, Any]]
+    ) -> Mapping[str, Any]:
+        """Persist timestamped stock observations without replacing newer data.
+
+        Every accepted event is retained for auditability.  The recommendation
+        engine selects the newest observation by timestamp, so a delayed event
+        can never move the current stock backwards.  Stable external or
+        idempotency keys make retries safe across process restarts.
+        """
+
+        if not records:
+            return {
+                "inserted": 0,
+                "skipped": 0,
+                "updated": 0,
+                "snapshot_ids": [],
+            }
+
+        inserted_ids: list[int] = []
+        skipped = 0
+        updated = 0
+
+        try:
+            with connect_database(self.database_path) as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+                for record in records:
+                    product_name = str(record["product_name"]).strip()
+                    product = connection.execute(
+                        "SELECT product_id FROM products WHERE product_name = ?",
+                        (product_name,),
+                    ).fetchone()
+                    if product is None:
+                        raise ProductNotFoundError(product_name)
+
+                    quantity = float(record["quantity_on_hand"])
+                    lead_time = int(record["supplier_lead_time_days"])
+                    if quantity < 0:
+                        raise ValueError("quantity_on_hand cannot be negative.")
+                    if lead_time < 1:
+                        raise ValueError("supplier_lead_time_days must be positive.")
+
+                    event_key = str(
+                        record.get("idempotency_key")
+                        or record.get("external_id")
+                        or ""
+                    ).strip()
+                    if not event_key:
+                        raise ValueError("Provide external_id or idempotency_key.")
+
+                    observed_at = _normalize_observed_at(record.get("observed_at"))
+                    source_key = f"api:inventory:{event_key}"
+                    duplicate = connection.execute(
+                        """
+                        SELECT inventory_id
+                        FROM inventory
+                        WHERE source_key = ?
+                           OR (
+                               ? IS NOT NULL
+                               AND external_id = ?
+                           )
+                           OR (
+                               ? IS NOT NULL
+                               AND idempotency_key = ?
+                           )
+                        LIMIT 1
+                        """,
+                        (
+                            source_key,
+                            record.get("external_id"),
+                            record.get("external_id"),
+                            record.get("idempotency_key"),
+                            record.get("idempotency_key"),
+                        ),
+                    ).fetchone()
+                    if duplicate is not None:
+                        skipped += 1
+                        continue
+
+                    latest = connection.execute(
+                        """
+                        SELECT observed_at
+                        FROM inventory
+                        WHERE product_id = ?
+                        ORDER BY observed_at DESC, inventory_id DESC
+                        LIMIT 1
+                        """,
+                        (int(product[0]),),
+                    ).fetchone()
+
+                    cursor = connection.execute(
+                        """
+                        INSERT INTO inventory(
+                            product_id, quantity_on_hand, supplier_lead_time_days,
+                            as_of_date, observed_at, external_id, idempotency_key,
+                            source_key, created_at, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            int(product[0]),
+                            quantity,
+                            lead_time,
+                            observed_at[:10],
+                            observed_at,
+                            record.get("external_id"),
+                            record.get("idempotency_key"),
+                            source_key,
+                            timestamp,
+                            timestamp,
+                        ),
+                    )
+                    snapshot_id = int(cursor.lastrowid)
+                    inserted_ids.append(snapshot_id)
+                    if latest is None or observed_at >= str(latest["observed_at"]):
+                        updated += 1
+
+                connection.commit()
+        except ProductNotFoundError:
+            raise
+        except ValueError:
+            raise
+        except (DatabaseError, sqlite3.Error) as exc:
+            logger.exception("Could not insert inventory snapshots")
+            raise ServiceUnavailableError(
+                "Could not write inventory snapshots to SQLite."
+            ) from exc
+
+        return {
+            "inserted": len(inserted_ids),
+            "skipped": skipped,
+            "updated": updated,
+            "snapshot_ids": inserted_ids,
         }
 
     def rebuild_modeling_data(self) -> Mapping[str, Any]:
@@ -952,6 +1088,25 @@ def _optional_float(value: Any) -> float | None:
     if value is None or (isinstance(value, float) and pd.isna(value)):
         return None
     return float(value)
+
+
+def _normalize_observed_at(value: Any) -> str:
+    """Normalize a timezone-aware event timestamp for lexicographic SQLite order."""
+
+    if isinstance(value, datetime):
+        observed = value
+    elif value is not None:
+        try:
+            observed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError("observed_at must be a valid ISO-8601 timestamp.") from exc
+    else:
+        raise ValueError("observed_at is required.")
+
+    if observed.tzinfo is None or observed.utcoffset() is None:
+        raise ValueError("observed_at must include a timezone offset.")
+
+    return observed.astimezone(timezone.utc).isoformat(timespec="seconds")
 
 
 def _optional_int(value: Any) -> int | None:
