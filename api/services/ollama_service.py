@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import math
-import os
 from collections.abc import Mapping, Sequence
 from typing import Any
 
 import httpx
+
+from api.config import Settings, load_settings
 
 
 class OllamaServiceError(RuntimeError):
@@ -57,16 +58,19 @@ class OllamaService:
         embedding_model: str | None = None,
         timeout_seconds: float | None = None,
         keep_alive: str = "5m",
+        settings: Settings | None = None,
     ) -> None:
+        self.settings = settings or load_settings()
         self.base_url = (
-            base_url or os.getenv("OLLAMA_BASE_URL") or "http://localhost:11434"
+            base_url or self.settings.ollama_base_url
         ).rstrip("/")
 
-        self.default_model = default_model or os.getenv("OLLAMA_MODEL") or "qwen3:4b"
+        self.default_model = default_model or self.settings.ollama_model
 
-        configured_embedding_model = embedding_model or os.getenv(
-            "OLLAMA_EMBEDDING_MODEL",
-            "qwen3-embedding:0.6b",
+        configured_embedding_model = (
+            self.settings.ollama_embedding_model
+            if embedding_model is None
+            else embedding_model
         )
 
         self.default_embedding_model = configured_embedding_model.strip()
@@ -79,7 +83,7 @@ class OllamaService:
         configured_timeout = (
             timeout_seconds
             if timeout_seconds is not None
-            else float(os.getenv("OLLAMA_TIMEOUT_SECONDS", "120"))
+            else self.settings.ollama_timeout_seconds
         )
 
         # LLM generation may take longer than a normal API request,

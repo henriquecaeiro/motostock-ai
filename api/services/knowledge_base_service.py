@@ -2,17 +2,14 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
+from api.config import Settings, load_settings
 from api.rag.chunking import (
     ALLOWED_KNOWLEDGE_FILES,
     chunk_markdown_document,
 )
 from api.schemas.rag import KnowledgeChunk
-
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_KNOWLEDGE_BASE_DIR = PROJECT_ROOT / "knowledge_base"
 
 
 class KnowledgeBaseServiceError(RuntimeError):
@@ -40,27 +37,23 @@ class KnowledgeBaseService:
         *,
         chunk_size: int | None = None,
         chunk_overlap: int | None = None,
+        settings: Settings | None = None,
     ) -> None:
+        self.settings = settings or load_settings()
         self.knowledge_base_dir = (
-            knowledge_base_dir or DEFAULT_KNOWLEDGE_BASE_DIR
+            knowledge_base_dir or self.settings.rag_knowledge_base_path
         ).resolve()
 
         self.chunk_size = (
             chunk_size
             if chunk_size is not None
-            else _read_integer_setting(
-                "RAG_CHUNK_SIZE",
-                default=1000,
-            )
+            else self.settings.rag_chunk_size
         )
 
         self.chunk_overlap = (
             chunk_overlap
             if chunk_overlap is not None
-            else _read_integer_setting(
-                "RAG_CHUNK_OVERLAP",
-                default=150,
-            )
+            else self.settings.rag_chunk_overlap
         )
 
         self._validate_configuration()
@@ -152,21 +145,3 @@ class KnowledgeBaseService:
 
         if self.chunk_overlap >= self.chunk_size:
             raise ValueError("RAG chunk overlap must be smaller than chunk size.")
-
-
-def _read_integer_setting(
-    name: str,
-    *,
-    default: int,
-) -> int:
-    """Read an integer environment setting."""
-
-    raw_value = os.getenv(name)
-
-    if raw_value is None:
-        return default
-
-    try:
-        return int(raw_value)
-    except ValueError as exc:
-        raise ValueError(f"{name} must be a valid integer.") from exc
