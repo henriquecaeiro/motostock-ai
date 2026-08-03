@@ -1,1 +1,1 @@
-"""CSV data access layer."""
+"""Data access implementations and their shared repository contract."""

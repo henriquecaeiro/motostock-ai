@@ -139,3 +139,20 @@ class CsvRepository:
 
         daily_sales = self.load_daily_sales()
         return pd.Timestamp(daily_sales["sale_date"].max())
+
+    def save_recommendations(self, payload: dict[str, Any]) -> None:
+        """Keep the CSV backend read-only; SQLite persists operational results."""
+
+        return None
+
+    def get_latest_recommendations(self, horizon_days: int | None = None):
+        """CSV has no persisted recommendation history."""
+
+        return None
+
+    def insert_sales(self, records):
+        """Prevent accidental writes when the read-only CSV backend is selected."""
+
+        raise ServiceUnavailableError(
+            "Sales ingestion requires DATA_BACKEND=sqlite."
+        )

@@ -54,3 +54,23 @@ def test_settings_accept_explicit_paths_and_optional_threshold(tmp_path: Path) -
     assert settings.rag_knowledge_base_path == tmp_path / "knowledge"
     assert settings.rag_storage_path == tmp_path / "storage"
     assert settings.rag_min_score == 0.4
+
+
+def test_settings_parse_sqlite_backend_and_boolean(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("DATA_BACKEND", "SQLITE")
+    monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "motostock.db"))
+    monkeypatch.setenv("AUTO_IMPORT_CSV", "false")
+
+    settings = load_settings()
+
+    assert settings.data_backend == "sqlite"
+    assert settings.database_path == (tmp_path / "motostock.db").resolve()
+    assert settings.auto_import_csv is False
+
+
+def test_invalid_backend_and_boolean_raise_clear_errors(monkeypatch):
+    for name, value in [("DATA_BACKEND", "postgres"), ("AUTO_IMPORT_CSV", "maybe")]:
+        monkeypatch.setenv(name, value)
+        with pytest.raises(ValueError, match=name):
+            load_settings()
+        monkeypatch.delenv(name)

@@ -13,6 +13,7 @@ MODEL_PATH = PROJECT_ROOT / "artifacts" / "models" / "xgboost_model.pkl"
 MODELING_DATA_PATH = PROJECT_ROOT / "data" / "processed" / "modeling_dataset.csv"
 DAILY_SALES_PATH = PROJECT_ROOT / "data" / "processed" / "daily_product_sales.csv"
 KNOWLEDGE_BASE_DIR = PROJECT_ROOT / "knowledge_base"
+DATABASE_PATH = PROJECT_ROOT / "storage" / "motostock.db"
 
 SELECTED_MODEL_NAME = "xgboost"
 DEFAULT_LEAD_TIME_DAYS = 7
@@ -41,6 +42,9 @@ class Settings:
     rag_max_top_k: int = 10
     rag_min_score: float | None = 0.40
     rag_max_context_chars: int = 6000
+    data_backend: str = "csv"
+    database_path: Path = DATABASE_PATH
+    auto_import_csv: bool = True
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -95,6 +99,18 @@ class Settings:
                 "RAG_MAX_CONTEXT_CHARS",
                 default=cls.rag_max_context_chars,
             ),
+            data_backend=_read_text_setting(
+                "DATA_BACKEND",
+                default=cls.data_backend,
+            ).lower(),
+            database_path=_read_path_setting(
+                "DATABASE_PATH",
+                default=cls.database_path,
+            ),
+            auto_import_csv=_read_bool_setting(
+                "AUTO_IMPORT_CSV",
+                default=cls.auto_import_csv,
+            ),
         )
 
     def __post_init__(self) -> None:
@@ -137,6 +153,12 @@ class Settings:
 
         if self.rag_max_context_chars <= 0:
             raise ValueError("RAG_MAX_CONTEXT_CHARS must be greater than zero.")
+
+        if self.data_backend not in {"csv", "sqlite"}:
+            raise ValueError("DATA_BACKEND must be either 'csv' or 'sqlite'.")
+
+        if not str(self.database_path).strip():
+            raise ValueError("DATABASE_PATH cannot be empty.")
 
 
 def load_settings() -> Settings:
@@ -187,6 +209,25 @@ def _read_float_setting(name: str, *, default: float) -> float:
         return float(raw_value.strip())
     except ValueError as exc:
         raise ValueError(f"{name} must be a valid number.") from exc
+
+
+def _read_bool_setting(name: str, *, default: bool) -> bool:
+    """Read a boolean setting using explicit, human-readable values."""
+
+    raw_value = os.getenv(name)
+
+    if raw_value is None:
+        return default
+
+    normalized = raw_value.strip().lower()
+
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+
+    raise ValueError(f"{name} must be a boolean value.")
 
 
 def _read_optional_float_setting(

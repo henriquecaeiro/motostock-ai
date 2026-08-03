@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 
 from api.config import load_settings
-from api.repositories.csv_repository import CsvRepository
+from api.repositories.factory import create_repository
 from api.routes import assistant, health, predictions, products, recommendations
 from api.services.embedding_service import EmbeddingService
 from api.services.forecast_service import ForecastService
@@ -34,7 +34,7 @@ async def lifespan(app: FastAPI):
     """Load application dependencies once at startup."""
 
     settings = load_settings()
-    repository = CsvRepository()
+    repository = create_repository(settings)
     model_service = ModelService()
     ollama_service = OllamaService(settings=settings)
 
@@ -101,8 +101,8 @@ app = FastAPI(
     title="MotoStock AI API",
     description=(
         "Demand forecasting and stock replenishment API for motorcycle and "
-        "delivery gear retail stores. This first version serves predictions "
-        "and recommendations from CSV-backed data and a saved XGBoost model."
+        "delivery gear retail stores. The API supports a SQLite operational "
+        "backend with CSV import compatibility and a saved XGBoost model."
     ),
     version="0.1.0",
     lifespan=lifespan,
