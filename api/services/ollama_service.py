@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import os
 from collections.abc import Mapping, Sequence
 from typing import Any
@@ -53,6 +54,7 @@ class OllamaService:
         self,
         base_url: str | None = None,
         default_model: str | None = None,
+        embedding_model: str | None = None,
         timeout_seconds: float | None = None,
         keep_alive: str = "5m",
     ) -> None:
@@ -61,6 +63,16 @@ class OllamaService:
         ).rstrip("/")
 
         self.default_model = default_model or os.getenv("OLLAMA_MODEL") or "qwen3:4b"
+
+        configured_embedding_model = embedding_model or os.getenv(
+            "OLLAMA_EMBEDDING_MODEL",
+            "qwen3-embedding:0.6b",
+        )
+
+        self.default_embedding_model = configured_embedding_model.strip()
+
+        if not self.default_embedding_model:
+            raise ValueError("The Ollama embedding model cannot be empty.")
 
         self.keep_alive = keep_alive
 
@@ -287,6 +299,43 @@ class OllamaService:
 
         return final_answer
 
+    async def embed(
+        self,
+        inputs: str | Sequence[str],
+        *,
+        model: str | None = None,
+    ) -> list[list[float]]:
+        """Generate embeddings for one or more text inputs."""
+
+        normalized_inputs = self._normalize_embed_inputs(inputs)
+
+        selected_model = (model or self.default_embedding_model).strip()
+
+        if not selected_model:
+            raise ValueError("The embedding model name cannot be empty.")
+
+        payload: dict[str, Any] = {
+            "model": selected_model,
+            "input": normalized_inputs,
+            "keep_alive": self.keep_alive,
+        }
+
+        try:
+            data = await self._request_json(
+                method="POST",
+                path="/api/embed",
+                json=payload,
+            )
+        except OllamaRequestError as exc:
+            if exc.status_code == 404:
+                raise OllamaModelUnavailableError(selected_model) from exc
+            raise
+
+        return self._parse_embeddings_response(
+            data,
+            expected_count=len(normalized_inputs),
+        )
+
     async def _request_json(
         self,
         method: str,
@@ -374,6 +423,110 @@ class OllamaService:
             )
 
         return normalized_messages
+
+    @staticmethod
+    def _normalize_embed_inputs(inputs: str | Sequence[str]) -> list[str]:
+        """Validate and normalize embedding inputs."""
+
+        if isinstance(inputs, str):
+            stripped_input = inputs.strip()
+
+            if not stripped_input:
+                raise ValueError("Embedding input cannot be empty.")
+
+            return [stripped_input]
+
+        if isinstance(inputs, bytes):
+            raise TypeError("Embedding inputs must be strings.")
+
+        if not isinstance(inputs, Sequence):
+            raise TypeError(
+                "Embedding inputs must be a string or a sequence of strings."
+            )
+
+        if not inputs:
+            raise ValueError("At least one embedding input is required.")
+
+        normalized_inputs: list[str] = []
+
+        for index, item in enumerate(inputs):
+            if not isinstance(item, str):
+                raise TypeError(
+                    f"Embedding input at position {index} must be a string."
+                )
+
+            stripped_item = item.strip()
+
+            if not stripped_item:
+                raise ValueError(
+                    f"Embedding input at position {index} cannot be empty."
+                )
+
+            normalized_inputs.append(stripped_item)
+
+        return normalized_inputs
+
+    @staticmethod
+    def _parse_embeddings_response(
+        data: Mapping[str, Any],
+        *,
+        expected_count: int,
+    ) -> list[list[float]]:
+        """Validate and normalize an Ollama embeddings response."""
+
+        embeddings = data.get("embeddings")
+
+        if not isinstance(embeddings, list):
+            raise OllamaInvalidResponseError(
+                "Ollama response does not contain valid embeddings."
+            )
+
+        if len(embeddings) != expected_count:
+            raise OllamaInvalidResponseError(
+                "Ollama returned an unexpected number of embeddings."
+            )
+
+        parsed_embeddings: list[list[float]] = []
+        expected_dimension: int | None = None
+
+        for index, vector in enumerate(embeddings):
+            if not isinstance(vector, list):
+                raise OllamaInvalidResponseError(
+                    f"Embedding at position {index} is not a list."
+                )
+
+            if not vector:
+                raise OllamaInvalidResponseError(
+                    f"Embedding at position {index} is empty."
+                )
+
+            parsed_vector: list[float] = []
+
+            for value in vector:
+                if isinstance(value, bool) or not isinstance(value, (int, float)):
+                    raise OllamaInvalidResponseError(
+                        f"Embedding at position {index} contains invalid values."
+                    )
+
+                float_value = float(value)
+
+                if not math.isfinite(float_value):
+                    raise OllamaInvalidResponseError(
+                        f"Embedding at position {index} contains non-finite values."
+                    )
+
+                parsed_vector.append(float_value)
+
+            if expected_dimension is None:
+                expected_dimension = len(parsed_vector)
+            elif len(parsed_vector) != expected_dimension:
+                raise OllamaInvalidResponseError(
+                    "Ollama returned embeddings with inconsistent dimensions."
+                )
+
+            parsed_embeddings.append(parsed_vector)
+
+        return parsed_embeddings
 
     @staticmethod
     def _extract_error_detail(response: httpx.Response) -> str:

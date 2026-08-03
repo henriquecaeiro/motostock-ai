@@ -176,6 +176,25 @@ On Windows, you can also use:
 
 The script configures `stdout` and `stderr` as UTF-8 when supported by Python, which helps avoid encoding errors on Windows terminals.
 
+### RAG knowledge base and embeddings
+
+The curated knowledge base lives in `knowledge_base/` and is loaded by `KnowledgeBaseService`, which prepares deterministic `KnowledgeChunk` objects using the chunker in `api/rag/chunking.py`. This step does not generate embeddings or perform vector search.
+
+Install the embedding model separately from the chat model:
+
+```bash
+ollama pull qwen3-embedding:0.6b
+```
+
+| Setting | Purpose | Example |
+|---------|---------|---------|
+| `OLLAMA_MODEL` | Chat model | `qwen3:4b` |
+| `OLLAMA_EMBEDDING_MODEL` | Embedding model | `qwen3-embedding:0.6b` |
+| `RAG_CHUNK_SIZE` | Chunk size in characters | `1000` |
+| `RAG_CHUNK_OVERLAP` | Chunk overlap in characters | `150` |
+
+`OllamaService.embed()` sends text to `POST /api/embed` and returns `list[list[float]]`. Vector search and full RAG retrieval are not implemented yet.
+
 ## Swagger documentation
 
 After starting the API, open:
