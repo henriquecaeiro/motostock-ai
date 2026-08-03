@@ -11,3 +11,7 @@ storage/*.db
 storage/*.sqlite
 storage/*.sqlite3
 storage/database/*
+storage/backups/*
+artifacts/models/candidates/*
+artifacts/models/backups/*
+reports/training_runs/*

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import logging
+import hashlib
 import json
 import sqlite3
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -12,12 +14,18 @@ from uuid import uuid4
 
 import pandas as pd
 
+from api.config import MODEL_PATH
 from api.database import (
     DatabaseError,
     connect_database,
     initialize_database,
 )
-from api.exceptions import ProductNotFoundError, ServiceUnavailableError
+from api.exceptions import (
+    ModelVersionNotFoundError,
+    ProductNotFoundError,
+    ServiceUnavailableError,
+)
+from src.training.gates import check_promotion_gate
 
 logger = logging.getLogger(__name__)
 
@@ -99,8 +107,12 @@ class SqliteRepository:
                     AS total_revenue_brl,
                 SUM(COALESCE(s.estimated_profit_brl, 0)) AS estimated_profit_brl,
                 AVG(s.discount_pct) AS discount_pct,
-                SUM(s.quantity_sold * s.unit_price_brl)
-                    / NULLIF(SUM(s.quantity_sold), 0) AS unit_price_brl,
+                CASE
+                    WHEN SUM(s.quantity_sold) > 0
+                        THEN SUM(s.quantity_sold * s.unit_price_brl)
+                            / NULLIF(SUM(s.quantity_sold), 0)
+                    ELSE MAX(NULLIF(s.unit_price_brl, 0))
+                END AS unit_price_brl,
                 MAX(s.current_stock_snapshot) AS current_stock_snapshot,
                 MAX(s.supplier_lead_time_days) AS supplier_lead_time_days,
                 p.product_category,
@@ -517,12 +529,13 @@ class SqliteRepository:
             full_dates = pd.date_range(history.index.min(), history.index.max(), freq="D")
 
             quantity = history["quantity_sold"].reindex(full_dates).fillna(0.0)
-            price = history["unit_price_brl"].reindex(full_dates).ffill().bfill().fillna(0.0)
+            price = history["unit_price_brl"].reindex(full_dates)
             previous_quantity = quantity.shift(1)
+            previous_price = price.shift(1)
             feature_frame = pd.DataFrame(
                 {
                     "quantity_sold": quantity,
-                    "unit_price_1d": price,
+                    "unit_price_1d": previous_price,
                     "quantity_1d": previous_quantity,
                     "quantity_7d": quantity.shift(7),
                     "quantity_14d": quantity.shift(14),
@@ -675,6 +688,265 @@ class SqliteRepository:
         result["details"] = json.loads(result.pop("details_json") or "{}")
         return result
 
+    def register_model_version(self, metadata: Mapping[str, Any]) -> None:
+        """Persist candidate metadata without changing the active artifact."""
+
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        status = str(metadata.get("status", "candidate"))
+        if status not in {"candidate", "production", "active", "rejected", "archived"}:
+            raise ValueError(f"Unsupported model status: {status}")
+
+        try:
+            with connect_database(self.database_path) as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                connection.execute(
+                    """
+                    INSERT INTO model_versions(
+                        version, model_name, artifact_path, artifact_sha256,
+                        backup_artifact_path, training_started_at, training_finished_at,
+                        data_start_date, data_end_date, feature_columns_json,
+                        parameters_json, metrics_json, seed, parent_version, status,
+                        promoted_at, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(version) DO UPDATE SET
+                        model_name = excluded.model_name,
+                        artifact_path = excluded.artifact_path,
+                        artifact_sha256 = excluded.artifact_sha256,
+                        training_started_at = excluded.training_started_at,
+                        training_finished_at = excluded.training_finished_at,
+                        data_start_date = excluded.data_start_date,
+                        data_end_date = excluded.data_end_date,
+                        feature_columns_json = excluded.feature_columns_json,
+                        parameters_json = excluded.parameters_json,
+                        metrics_json = excluded.metrics_json,
+                        seed = excluded.seed,
+                        status = excluded.status,
+                        updated_at = excluded.updated_at
+                    """,
+                    (
+                        str(metadata["version"]),
+                        str(metadata["model_name"]),
+                        str(metadata["artifact_path"]),
+                        str(metadata.get("artifact_sha256", "")),
+                        metadata.get("backup_artifact_path"),
+                        metadata.get("training_started_at"),
+                        metadata.get("trained_at") or metadata.get("training_finished_at"),
+                        metadata.get("data_start_date"),
+                        metadata.get("data_end_date"),
+                        json.dumps(metadata.get("feature_columns", []), ensure_ascii=False),
+                        json.dumps(metadata.get("parameters", {}), ensure_ascii=False, default=str),
+                        json.dumps(metadata.get("metrics", {}), ensure_ascii=False, default=str),
+                        int(metadata.get("seed", 42)),
+                        metadata.get("parent_version"),
+                        status,
+                        metadata.get("promoted_at"),
+                        now,
+                        now,
+                    ),
+                )
+                connection.commit()
+        except (DatabaseError, sqlite3.Error) as exc:
+            logger.exception("Could not register model version")
+            raise ServiceUnavailableError("Could not persist model metadata.") from exc
+
+    def list_model_versions(self) -> list[Mapping[str, Any]]:
+        """List model metadata newest first."""
+
+        try:
+            with connect_database(self.database_path) as connection:
+                rows = connection.execute(
+                    "SELECT * FROM model_versions ORDER BY created_at DESC, model_version_id DESC"
+                ).fetchall()
+        except DatabaseError as exc:
+            logger.exception("Could not list model versions")
+            raise ServiceUnavailableError("Model registry is unavailable.") from exc
+
+        return [_model_row_to_dict(row) for row in rows]
+
+    def get_model_version(self, version: str) -> Mapping[str, Any] | None:
+        """Read one model version by its exact version string."""
+
+        row = self._fetch_one(
+            "SELECT * FROM model_versions WHERE version = ?",
+            (version,),
+        )
+        return None if row is None else _model_row_to_dict(row)
+
+    def promote_model_version(
+        self,
+        version: str,
+        *,
+        production_path: str | Path = MODEL_PATH,
+    ) -> Mapping[str, Any]:
+        """Explicitly copy a candidate to production and update its registry state."""
+
+        candidate = self.get_model_version(version)
+        if candidate is None:
+            raise ModelVersionNotFoundError(version)
+        if candidate["status"] not in {"candidate", "rejected"}:
+            raise ValueError("Only candidate or rejected versions can be promoted.")
+
+        gate = check_promotion_gate(dict(candidate))
+        if not gate["passed"]:
+            raise ValueError(f"Candidate failed promotion gate: {gate}")
+
+        candidate_path = Path(str(candidate["artifact_path"]))
+        if not candidate_path.exists():
+            raise ServiceUnavailableError("Candidate artifact is unavailable.")
+        checksum = _sha256_path(candidate_path)
+        if candidate.get("artifact_sha256") and checksum != candidate["artifact_sha256"]:
+            raise ServiceUnavailableError("Candidate artifact checksum does not match metadata.")
+
+        try:
+            import joblib
+
+            loaded = joblib.load(candidate_path)
+            if not hasattr(loaded, "predict"):
+                raise ValueError("Candidate artifact does not expose predict().")
+        except Exception as exc:
+            raise ServiceUnavailableError("Candidate artifact failed smoke loading.") from exc
+
+        production = Path(production_path)
+        production.parent.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        backup_path = production.parent / "backups" / f"{timestamp}_{production.name}"
+        backup_path.parent.mkdir(parents=True, exist_ok=True)
+        if production.exists():
+            shutil.copy2(production, backup_path)
+
+        current = self._fetch_one(
+            """
+            SELECT version FROM model_versions
+            WHERE status IN ('production', 'active')
+            ORDER BY promoted_at DESC, model_version_id DESC
+            LIMIT 1
+            """
+        )
+        parent_version = str(current["version"]) if current is not None else None
+
+        if parent_version is None and backup_path.exists():
+            legacy_version = f"legacy-production-{timestamp}"
+            now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+            try:
+                with connect_database(self.database_path) as connection:
+                    connection.execute("BEGIN IMMEDIATE")
+                    connection.execute(
+                        """
+                        INSERT INTO model_versions(
+                            version, model_name, artifact_path, artifact_sha256,
+                            feature_columns_json, parameters_json, metrics_json,
+                            seed, status, created_at, updated_at
+                        ) VALUES (?, ?, ?, ?, '[]', '{}', '{}', 42, 'archived', ?, ?)
+                        """,
+                        (
+                            legacy_version,
+                            str(candidate["model_name"]),
+                            str(backup_path.resolve()),
+                            _sha256_path(backup_path),
+                            now,
+                            now,
+                        ),
+                    )
+                    connection.commit()
+                parent_version = legacy_version
+            except (DatabaseError, sqlite3.Error) as exc:
+                logger.exception("Could not register legacy production model")
+                raise ServiceUnavailableError("Could not prepare model rollback metadata.") from exc
+
+        try:
+            shutil.copy2(candidate_path, production)
+            now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+            with connect_database(self.database_path) as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                connection.execute(
+                    "UPDATE model_versions SET status = 'archived', updated_at = ? WHERE status IN ('production', 'active')",
+                    (now,),
+                )
+                connection.execute(
+                    """
+                    UPDATE model_versions
+                    SET status = 'production', parent_version = ?,
+                        backup_artifact_path = ?, promoted_at = ?, updated_at = ?
+                    WHERE version = ?
+                    """,
+                    (
+                        parent_version,
+                        str(backup_path.resolve()) if backup_path.exists() else None,
+                        now,
+                        now,
+                        version,
+                    ),
+                )
+                connection.commit()
+        except (DatabaseError, sqlite3.Error, OSError) as exc:
+            if backup_path.exists():
+                shutil.copy2(backup_path, production)
+            logger.exception("Could not promote model version")
+            raise ServiceUnavailableError("Could not promote model version.") from exc
+
+        return {
+            "version": version,
+            "status": "production",
+            "production_path": str(production.resolve()),
+            "backup_path": str(backup_path.resolve()) if backup_path.exists() else None,
+            "parent_version": parent_version,
+            "gate": gate,
+        }
+
+    def rollback_model_version(
+        self,
+        version: str,
+        *,
+        production_path: str | Path = MODEL_PATH,
+    ) -> Mapping[str, Any]:
+        """Restore the parent artifact of one explicitly selected production version."""
+
+        current = self.get_model_version(version)
+        if current is None:
+            raise ModelVersionNotFoundError(version)
+        if current["status"] not in {"production", "active"}:
+            raise ValueError("Only the production version can be rolled back.")
+
+        target = None
+        parent_version = current.get("parent_version")
+        if parent_version:
+            parent = self.get_model_version(str(parent_version))
+            if parent and Path(str(parent["artifact_path"])).exists():
+                target = Path(str(parent["artifact_path"]))
+        if target is None and current.get("backup_artifact_path"):
+            backup = Path(str(current["backup_artifact_path"]))
+            if backup.exists():
+                target = backup
+        if target is None:
+            raise ServiceUnavailableError("No rollback artifact is available.")
+
+        production = Path(production_path)
+        shutil.copy2(target, production)
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        try:
+            with connect_database(self.database_path) as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                connection.execute(
+                    "UPDATE model_versions SET status = 'archived', updated_at = ? WHERE version = ?",
+                    (now, version),
+                )
+                if parent_version:
+                    connection.execute(
+                        "UPDATE model_versions SET status = 'production', promoted_at = ?, updated_at = ? WHERE version = ?",
+                        (now, now, parent_version),
+                    )
+                connection.commit()
+        except (DatabaseError, sqlite3.Error) as exc:
+            logger.exception("Could not persist model rollback")
+            raise ServiceUnavailableError("Could not persist model rollback.") from exc
+
+        return {
+            "version": version,
+            "status": "rolled_back",
+            "restored_version": parent_version,
+            "production_path": str(production.resolve()),
+        }
+
 
 def _optional_float(value: Any) -> float | None:
     if value is None or (isinstance(value, float) and pd.isna(value)):
@@ -686,6 +958,25 @@ def _optional_int(value: Any) -> int | None:
     if value is None or (isinstance(value, float) and pd.isna(value)):
         return None
     return int(value)
+
+
+def _sha256_path(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _model_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
+    result = dict(row)
+    for column in ("feature_columns_json", "parameters_json", "metrics_json"):
+        key = column.removesuffix("_json")
+        try:
+            result[key] = json.loads(result.pop(column) or ("[]" if key == "feature_columns" else "{}"))
+        except json.JSONDecodeError:
+            result[key] = [] if key == "feature_columns" else {}
+    return result
 
 
 SQLiteRepository = SqliteRepository

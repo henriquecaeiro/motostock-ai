@@ -93,6 +93,19 @@ Run the same refresh flow from a shell when an HTTP call is not needed:
 .venv\\Scripts\\python.exe -m scripts.refresh_recommendations
 ```
 
+Model training is deliberately separate from serving. Train a candidate,
+evaluate it, then promote or roll it back explicitly:
+
+```bash
+.venv\\Scripts\\python.exe -m scripts.train_model --model xgboost
+.venv\\Scripts\\python.exe -m scripts.evaluate_candidate --artifact artifacts/models/candidates/<version>.pkl
+.venv\\Scripts\\python.exe -m scripts.promote_model <version>
+.venv\\Scripts\\python.exe -m scripts.rollback_model <production-version>
+```
+
+Candidates are stored outside the production artifact path. The registry keeps
+status, checksum, parameters, metrics, data interval and parent version.
+
 ## Running tests
 
 ```bash
@@ -310,6 +323,9 @@ After starting the API, open:
 | POST | `/recommendations/refresh` | Rebuild features and persist current recommendations |
 | POST | `/sales` | Insert one idempotent operational sale |
 | POST | `/sales/batch` | Insert a transactional batch of sales |
+| GET | `/models` | List registered model candidates and production versions |
+| POST | `/models/{version}/promote` | Explicitly promote a candidate after the gate |
+| POST | `/models/{version}/rollback` | Restore the selected production model's parent |
 | GET | `/assistant/health` | Check Ollama and configured model availability |
 | POST | `/assistant/chat` | Send a message to the local AI assistant |
 

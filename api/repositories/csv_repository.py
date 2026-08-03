@@ -168,3 +168,9 @@ class CsvRepository:
         """CSV has no durable job-run table."""
 
         return None
+
+    def register_model_version(self, metadata):
+        raise ServiceUnavailableError("Model registry requires DATA_BACKEND=sqlite.")
+
+    def list_model_versions(self):
+        return []

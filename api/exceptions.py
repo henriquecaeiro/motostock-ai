@@ -13,6 +13,16 @@ class ProductNotFoundError(HTTPException):
         )
 
 
+class ModelVersionNotFoundError(HTTPException):
+    """Raised when an administrative model version is not registered."""
+
+    def __init__(self, version: str) -> None:
+        super().__init__(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Model version '{version}' was not found.",
+        )
+
+
 class ServiceUnavailableError(HTTPException):
     """Raised when an essential artifact or dataset is unavailable."""
 

@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Iterator
 
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 class DatabaseError(RuntimeError):
@@ -248,6 +248,56 @@ def _schema_v3(connection: sqlite3.Connection) -> None:
     )
 
 
+def _schema_v4(connection: sqlite3.Connection) -> None:
+    """Add model checksums, parameters and explicit production status."""
+
+    connection.executescript(
+        """
+        CREATE TABLE model_versions_v4 (
+            model_version_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            version TEXT NOT NULL UNIQUE,
+            model_name TEXT NOT NULL,
+            artifact_path TEXT NOT NULL,
+            artifact_sha256 TEXT NOT NULL DEFAULT '',
+            backup_artifact_path TEXT,
+            training_started_at TEXT,
+            training_finished_at TEXT,
+            data_start_date TEXT,
+            data_end_date TEXT,
+            feature_columns_json TEXT NOT NULL,
+            parameters_json TEXT NOT NULL DEFAULT '{}',
+            metrics_json TEXT NOT NULL,
+            seed INTEGER NOT NULL DEFAULT 42,
+            parent_version TEXT,
+            status TEXT NOT NULL CHECK (
+                status IN ('candidate', 'production', 'active', 'rejected', 'archived')
+            ),
+            promoted_at TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        INSERT INTO model_versions_v4(
+            model_version_id, version, model_name, artifact_path,
+            training_started_at, training_finished_at, data_start_date,
+            data_end_date, feature_columns_json, metrics_json, status,
+            created_at, updated_at
+        )
+        SELECT model_version_id, version, model_name, artifact_path,
+               training_started_at, training_finished_at, data_start_date,
+               data_end_date, feature_columns_json, metrics_json, status,
+               created_at, updated_at
+        FROM model_versions;
+
+        DROP TABLE model_versions;
+        ALTER TABLE model_versions_v4 RENAME TO model_versions;
+
+        CREATE INDEX IF NOT EXISTS idx_model_versions_status
+            ON model_versions(status, created_at DESC);
+        """
+    )
+
+
 @contextmanager
 def connect_database(database_path: str | Path) -> Iterator[sqlite3.Connection]:
     """Open a connection with foreign keys and a bounded busy timeout."""
@@ -314,6 +364,13 @@ def initialize_database(database_path: str | Path) -> int:
                 connection.execute(
                     "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)",
                     (3, utc_now_iso()),
+                )
+
+            if 4 not in applied_versions:
+                _schema_v4(connection)
+                connection.execute(
+                    "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)",
+                    (4, utc_now_iso()),
                 )
 
             connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
