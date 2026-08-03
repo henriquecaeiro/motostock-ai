@@ -10,13 +10,14 @@ from fastapi import FastAPI
 
 from api.config import load_settings
 from api.repositories.factory import create_repository
-from api.routes import assistant, health, predictions, products, recommendations
+from api.routes import assistant, health, predictions, products, recommendations, sales
 from api.services.embedding_service import EmbeddingService
 from api.services.forecast_service import ForecastService
 from api.services.model_service import ModelService
 from api.services.rag_service import RagService
 from api.services.ollama_service import OllamaService
 from api.services.recommendation_service import RecommendationService
+from api.services.refresh_service import RefreshService
 from api.services.tool_service import ToolService
 from api.services.vector_store_service import (
     VectorStoreCorruptedError,
@@ -79,6 +80,11 @@ async def lifespan(app: FastAPI):
         forecast_service=forecast_service,
         recommendation_service=recommendation_service,
     )
+    refresh_service = RefreshService(
+        repository=repository,
+        recommendation_service=recommendation_service,
+        model_service=model_service,
+    )
 
     app.state.settings = settings
     app.state.repository = repository
@@ -90,6 +96,7 @@ async def lifespan(app: FastAPI):
     app.state.vector_store_service = vector_store_service
     app.state.rag_service = rag_service
     app.state.tool_service = tool_service
+    app.state.refresh_service = refresh_service
 
     try:
         yield
@@ -112,6 +119,7 @@ app.include_router(health.router)
 app.include_router(products.router)
 app.include_router(predictions.router)
 app.include_router(recommendations.router)
+app.include_router(sales.router)
 app.include_router(assistant.router)
 
 

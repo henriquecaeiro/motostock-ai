@@ -1,5 +1,9 @@
 """Shared FastAPI test client fixture."""
 
+import os
+
+os.environ.setdefault("DATA_BACKEND", "csv")
+
 import pytest
 from fastapi.testclient import TestClient
 

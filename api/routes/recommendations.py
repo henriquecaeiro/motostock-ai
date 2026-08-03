@@ -6,8 +6,28 @@ from api.schemas.recommendation import (
     RecommendationsResponse,
     RecommendationsSummaryResponse,
 )
+from api.schemas.refresh import RefreshRequest, RefreshResponse
 
 router = APIRouter(tags=["Recommendations"])
+
+
+@router.post(
+    "/recommendations/refresh",
+    response_model=RefreshResponse,
+    summary="Refresh operational features and recommendations",
+    description=(
+        "Rebuild SQLite modeling features from current sales, forecast with the "
+        "active model and persist the resulting recommendations."
+    ),
+)
+def refresh_recommendations(
+    request: Request,
+    payload: RefreshRequest | None = None,
+) -> dict:
+    refresh_service = request.app.state.refresh_service
+    return refresh_service.refresh(
+        horizon_days=payload.horizon_days if payload else 14,
+    )
 
 
 @router.get(

@@ -87,6 +87,12 @@ The import is transactional and idempotent. Historical zero-demand days are
 preserved; new operational sales still require a positive quantity and a
 non-negative price. Set `DATA_BACKEND=csv` to use the read-only CSV repository.
 
+Run the same refresh flow from a shell when an HTTP call is not needed:
+
+```bash
+.venv\\Scripts\\python.exe -m scripts.refresh_recommendations
+```
+
 ## Running tests
 
 ```bash
@@ -301,6 +307,9 @@ After starting the API, open:
 | GET | `/recommendations` | Generate stock recommendations for all products |
 | GET | `/recommendations/latest` | Read the latest persisted recommendation run |
 | GET | `/recommendations/summary` | Summary counts from the current recommendations |
+| POST | `/recommendations/refresh` | Rebuild features and persist current recommendations |
+| POST | `/sales` | Insert one idempotent operational sale |
+| POST | `/sales/batch` | Insert a transactional batch of sales |
 | GET | `/assistant/health` | Check Ollama and configured model availability |
 | POST | `/assistant/chat` | Send a message to the local AI assistant |
 
@@ -347,5 +356,6 @@ processed CSV files remain the reproducible import source:
 - `data/processed/daily_product_sales.csv`
 
 The current branch includes the database foundation and persisted
-recommendation runs. Sales ingestion endpoints, incremental refresh and model
-retraining remain separate operational phases.
+recommendation runs. `POST /sales` and `POST /sales/batch` accept idempotent
+operational writes, and `POST /recommendations/refresh` rebuilds the feature
+table and recommendation result under a simple in-process lock.

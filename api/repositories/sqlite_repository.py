@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import json
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -500,6 +501,179 @@ class SqliteRepository:
             "skipped": skipped,
             "sale_ids": inserted_ids,
         }
+
+    def rebuild_modeling_data(self) -> Mapping[str, Any]:
+        """Rebuild lag and rolling features from the current daily sales table."""
+
+        daily = self.load_daily_sales()
+        if daily.empty:
+            raise ServiceUnavailableError("No sales are available for feature refresh.")
+
+        records: list[dict[str, Any]] = []
+        for product_name, group in daily.groupby("product_name"):
+            history = group.copy()
+            history["sale_date"] = pd.to_datetime(history["sale_date"])
+            history = history.sort_values("sale_date").set_index("sale_date")
+            full_dates = pd.date_range(history.index.min(), history.index.max(), freq="D")
+
+            quantity = history["quantity_sold"].reindex(full_dates).fillna(0.0)
+            price = history["unit_price_brl"].reindex(full_dates).ffill().bfill().fillna(0.0)
+            previous_quantity = quantity.shift(1)
+            feature_frame = pd.DataFrame(
+                {
+                    "quantity_sold": quantity,
+                    "unit_price_1d": price,
+                    "quantity_1d": previous_quantity,
+                    "quantity_7d": quantity.shift(7),
+                    "quantity_14d": quantity.shift(14),
+                    "rolling_1d": previous_quantity.rolling(1).mean(),
+                    "rolling_7d": previous_quantity.rolling(7).mean(),
+                    "rolling_14d": previous_quantity.rolling(14).mean(),
+                },
+                index=full_dates,
+            )
+            feature_frame = feature_frame.dropna()
+
+            product = self._fetch_one(
+                "SELECT product_id FROM products WHERE product_name = ?",
+                (str(product_name),),
+            )
+            if product is None:
+                raise ProductNotFoundError(str(product_name))
+
+            for sale_date, row in feature_frame.iterrows():
+                records.append(
+                    {
+                        "product_id": int(product["product_id"]),
+                        "sale_date": pd.Timestamp(sale_date).date().isoformat(),
+                        "quantity_sold": float(row["quantity_sold"]),
+                        "unit_price_1d": float(row["unit_price_1d"]),
+                        "day_of_week": int(sale_date.dayofweek),
+                        "day_of_month": int(sale_date.day),
+                        "month": int(sale_date.month),
+                        "week_of_year": int(sale_date.isocalendar().week),
+                        "is_weekend": int(sale_date.dayofweek in (5, 6)),
+                        "quantity_1d": float(row["quantity_1d"]),
+                        "quantity_7d": float(row["quantity_7d"]),
+                        "quantity_14d": float(row["quantity_14d"]),
+                        "rolling_1d": float(row["rolling_1d"]),
+                        "rolling_7d": float(row["rolling_7d"]),
+                        "rolling_14d": float(row["rolling_14d"]),
+                    }
+                )
+
+        timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        try:
+            with connect_database(self.database_path) as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                connection.execute("DELETE FROM modeling_data")
+                connection.executemany(
+                    """
+                    INSERT INTO modeling_data(
+                        product_id, sale_date, quantity_sold, unit_price_1d,
+                        day_of_week, day_of_month, month, week_of_year, is_weekend,
+                        quantity_1d, quantity_7d, quantity_14d, rolling_1d,
+                        rolling_7d, rolling_14d, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    [
+                        (
+                            record["product_id"],
+                            record["sale_date"],
+                            record["quantity_sold"],
+                            record["unit_price_1d"],
+                            record["day_of_week"],
+                            record["day_of_month"],
+                            record["month"],
+                            record["week_of_year"],
+                            record["is_weekend"],
+                            record["quantity_1d"],
+                            record["quantity_7d"],
+                            record["quantity_14d"],
+                            record["rolling_1d"],
+                            record["rolling_7d"],
+                            record["rolling_14d"],
+                            timestamp,
+                            timestamp,
+                        )
+                        for record in records
+                    ],
+                )
+                connection.commit()
+        except (DatabaseError, sqlite3.Error) as exc:
+            logger.exception("Could not rebuild modeling data")
+            raise ServiceUnavailableError("Could not rebuild modeling features.") from exc
+
+        dates = [record["sale_date"] for record in records]
+        return {
+            "rows": len(records),
+            "products": int(daily["product_name"].nunique()),
+            "start_date": min(dates) if dates else None,
+            "end_date": max(dates) if dates else None,
+        }
+
+    def record_application_run(
+        self,
+        *,
+        run_key: str,
+        job_name: str,
+        status: str,
+        started_at: str,
+        finished_at: str | None = None,
+        details: Mapping[str, Any] | None = None,
+        error_message: str | None = None,
+    ) -> None:
+        """Upsert one idempotent application execution record."""
+
+        details_json = json.dumps(details or {}, ensure_ascii=False, default=str)
+        timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        try:
+            with connect_database(self.database_path) as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                connection.execute(
+                    """
+                    INSERT INTO application_runs(
+                        run_key, job_name, status, started_at, finished_at,
+                        details_json, error_message, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(run_key) DO UPDATE SET
+                        job_name = excluded.job_name,
+                        status = excluded.status,
+                        started_at = excluded.started_at,
+                        finished_at = excluded.finished_at,
+                        details_json = excluded.details_json,
+                        error_message = excluded.error_message,
+                        updated_at = excluded.updated_at
+                    """,
+                    (
+                        run_key,
+                        job_name,
+                        status,
+                        started_at,
+                        finished_at,
+                        details_json,
+                        error_message,
+                        timestamp,
+                        timestamp,
+                    ),
+                )
+                connection.commit()
+        except (DatabaseError, sqlite3.Error) as exc:
+            logger.exception("Could not persist application run")
+            raise ServiceUnavailableError("Could not persist application run.") from exc
+
+    def get_application_run(self, run_key: str) -> Mapping[str, Any] | None:
+        """Read a refresh execution by its deterministic key."""
+
+        row = self._fetch_one(
+            "SELECT * FROM application_runs WHERE run_key = ?",
+            (run_key,),
+        )
+        if row is None:
+            return None
+        result = dict(row)
+        result["details"] = json.loads(result.pop("details_json") or "{}")
+        return result
 
 
 def _optional_float(value: Any) -> float | None:

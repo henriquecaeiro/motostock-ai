@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Iterator
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 class DatabaseError(RuntimeError):
@@ -224,6 +224,30 @@ def _schema_v2(connection: sqlite3.Connection) -> None:
     )
 
 
+def _schema_v3(connection: sqlite3.Connection) -> None:
+    """Store idempotent refresh/job executions separately from result rows."""
+
+    connection.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS application_runs (
+            application_run_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_key TEXT NOT NULL UNIQUE,
+            job_name TEXT NOT NULL,
+            status TEXT NOT NULL CHECK (status IN ('running', 'completed', 'failed')),
+            started_at TEXT NOT NULL,
+            finished_at TEXT,
+            details_json TEXT NOT NULL DEFAULT '{}',
+            error_message TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_application_runs_job_status
+            ON application_runs(job_name, status, updated_at DESC);
+        """
+    )
+
+
 @contextmanager
 def connect_database(database_path: str | Path) -> Iterator[sqlite3.Connection]:
     """Open a connection with foreign keys and a bounded busy timeout."""
@@ -283,6 +307,13 @@ def initialize_database(database_path: str | Path) -> int:
                 connection.execute(
                     "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)",
                     (2, utc_now_iso()),
+                )
+
+            if 3 not in applied_versions:
+                _schema_v3(connection)
+                connection.execute(
+                    "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)",
+                    (3, utc_now_iso()),
                 )
 
             connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
