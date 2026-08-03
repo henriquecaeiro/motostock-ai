@@ -163,6 +163,43 @@ python -m scripts.check_ollama_integration
 
 On Linux/macOS, use `RUN_OLLAMA_TESTS=1 python -m pytest -m manual -q`.
 
+## Docker
+
+The API image uses Python 3.11, installs only runtime dependencies, prepares
+the ignored serving CSVs from the tracked raw dataset, imports SQLite data and
+then starts Uvicorn. SQLite and the generated RAG index are stored in the
+`motostock_storage` named volume.
+
+```bash
+docker compose build api
+docker compose up api
+curl http://127.0.0.1:8000/health
+```
+
+By default the API container reaches Ollama on the host at
+`http://host.docker.internal:11434`. Start Ollama on the host and set
+`OLLAMA_MODEL` and `OLLAMA_EMBEDDING_MODEL` as needed. The Docker healthcheck
+only checks the FastAPI process; `/assistant/health` reports Ollama/model
+availability separately.
+
+If your local `.env` still sets `OLLAMA_BASE_URL=http://localhost:11434`,
+override it for the container with
+`OLLAMA_BASE_URL=http://host.docker.internal:11434 docker compose up api`.
+
+Ollama can also run in an optional container. It requires no GPU configuration
+in this compose file, but model downloads are still explicit:
+
+```powershell
+$env:OLLAMA_BASE_URL="http://ollama:11434"
+docker compose --profile ollama up --build
+docker compose exec ollama ollama pull qwen3:4b
+docker compose exec ollama ollama pull qwen3-embedding:0.6b
+docker compose exec api python -m scripts.index_knowledge_base
+```
+
+On Linux/macOS, use `OLLAMA_BASE_URL=http://ollama:11434 docker compose --profile ollama up --build`.
+The optional Ollama model volume is separate from the API storage volume.
+
 ## Local AI Assistant
 
 The MotoStock AI API includes a local AI assistant powered by [Ollama](https://ollama.com/). The assistant uses the **qwen3:4b** model, which runs locally on your machine through the Ollama runtime.
