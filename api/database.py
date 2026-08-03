@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Iterator
 
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 
 class DatabaseError(RuntimeError):
@@ -298,6 +298,58 @@ def _schema_v4(connection: sqlite3.Connection) -> None:
     )
 
 
+def _schema_v5(connection: sqlite3.Connection) -> None:
+    """Keep ordered, idempotent inventory snapshots with timestamp precision.
+
+    The original inventory table allowed only one row per product and calendar
+    date.  Rebuilding the table preserves those rows while allowing several
+    observations on the same day and retaining each event's stable identity.
+    """
+
+    connection.executescript(
+        """
+        CREATE TABLE inventory_v5 (
+            inventory_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            product_id INTEGER NOT NULL REFERENCES products(product_id) ON DELETE RESTRICT,
+            quantity_on_hand REAL NOT NULL CHECK (quantity_on_hand >= 0),
+            supplier_lead_time_days INTEGER NOT NULL DEFAULT 7 CHECK (supplier_lead_time_days >= 1),
+            as_of_date TEXT NOT NULL,
+            observed_at TEXT NOT NULL,
+            external_id TEXT,
+            idempotency_key TEXT,
+            source_key TEXT NOT NULL UNIQUE,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        INSERT INTO inventory_v5(
+            inventory_id, product_id, quantity_on_hand, supplier_lead_time_days,
+            as_of_date, observed_at, external_id, idempotency_key, source_key,
+            created_at, updated_at
+        )
+        SELECT
+            inventory_id, product_id, quantity_on_hand, supplier_lead_time_days,
+            as_of_date,
+            CASE
+                WHEN instr(as_of_date, 'T') > 0 THEN as_of_date
+                ELSE as_of_date || 'T00:00:00+00:00'
+            END,
+            NULL, NULL, source_key, created_at, updated_at
+        FROM inventory;
+
+        DROP TABLE inventory;
+        ALTER TABLE inventory_v5 RENAME TO inventory;
+
+        CREATE INDEX IF NOT EXISTS idx_inventory_product_observed
+            ON inventory(product_id, observed_at DESC, inventory_id DESC);
+        CREATE INDEX IF NOT EXISTS idx_inventory_external_id
+            ON inventory(external_id);
+        CREATE INDEX IF NOT EXISTS idx_inventory_idempotency_key
+            ON inventory(idempotency_key);
+        """
+    )
+
+
 @contextmanager
 def connect_database(database_path: str | Path) -> Iterator[sqlite3.Connection]:
     """Open a connection with foreign keys and a bounded busy timeout."""
@@ -371,6 +423,13 @@ def initialize_database(database_path: str | Path) -> int:
                 connection.execute(
                     "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)",
                     (4, utc_now_iso()),
+                )
+
+            if 5 not in applied_versions:
+                _schema_v5(connection)
+                connection.execute(
+                    "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)",
+                    (5, utc_now_iso()),
                 )
 
             connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
