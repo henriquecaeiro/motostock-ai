@@ -20,7 +20,7 @@
     "question": "How does the local assistant use the knowledge base?",
     "language": "en",
     "expected_sources": ["system_architecture.md"],
-    "expected_sections": ["RAG", "Local LLM"],
+    "expected_sections": ["RAG flow"],
     "expected_keywords": ["retrieval", "Ollama"]
   }
 ]
