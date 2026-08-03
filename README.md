@@ -249,6 +249,58 @@ Typical status behavior:
 | 422 | Invalid request body, product horizon, price, quantity or idempotency key. |
 | 502/503/504 | Upstream Ollama, model, data or timeout failure, with a safe detail message. |
 
+## MotoBoy POS integration
+
+The MotoBoy POS is the transactional source of truth for products, sales and
+local stock. It sends a one-way analytical copy to MotoStock AI through the
+Tauri Rust client; the React UI never calls FastAPI directly. MotoStock AI does
+not write back to the POS database or change local stock.
+
+The existing `POST /sales/batch` contract accepts mapped POS sale items. Stock
+changes that are not sales use these additional contracts:
+
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| POST | `/inventory/snapshots` | Ingest one timestamped stock observation. |
+| POST | `/inventory/snapshots/batch` | Ingest up to 1000 observations transactionally. |
+
+Example snapshot:
+
+```json
+{
+  "product_name": "Bag Delivery 45L",
+  "quantity_on_hand": 10,
+  "supplier_lead_time_days": 7,
+  "observed_at": "2026-08-03T18:30:00Z",
+  "external_id": "motoboy-pos:stock-movement:27",
+  "idempotency_key": "motoboy-pos:stock-movement:27"
+}
+```
+
+`product_name` must already exist in the MotoStock catalog. The quantity cannot
+be negative, lead time must be at least one day, `observed_at` must include a
+timezone, and one of `external_id` or `idempotency_key` is required. Batches are
+bounded at 1000 records and are committed as one transaction. The response
+reports `inserted`, `skipped`, `updated` and `snapshot_ids`.
+
+Retries are safe because the event key is stored with the snapshot and checked
+before insertion. Every accepted event is retained, including a delayed event;
+the recommendation repository selects the greatest `observed_at` per product,
+so an older event cannot replace a newer stock value. Schema migration 5 adds
+timestamp precision and event identity while preserving existing date-based
+inventory rows.
+
+Recommended startup order is: initialize/import the MotoStock SQLite database,
+start FastAPI, confirm `/health`, then start the POS. If FastAPI or SQLite is
+unavailable, the POS must keep the event in its local outbox and retry later.
+The AI service is analytical only: recommendations, forecasts and assistant
+responses are consultive and never mutate POS stock.
+
+For troubleshooting, check that the mapped product name is returned by
+`GET /products`, inspect the safe HTTP detail for `422` validation errors, and
+retry a `503` after the local SQLite/API dependency is available. Do not copy
+the POS SQLite file into this project; send explicit events over the API.
+
 ## SQLite and operational refresh
 
 SQLite is the operational default. The versioned schema stores products,
