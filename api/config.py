@@ -39,7 +39,8 @@ class Settings:
     rag_chunk_overlap: int = 150
     rag_default_top_k: int = 4
     rag_max_top_k: int = 10
-    rag_min_score: float | None = None
+    rag_min_score: float | None = 0.40
+    rag_max_context_chars: int = 6000
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -86,7 +87,14 @@ class Settings:
                 "RAG_MAX_TOP_K",
                 default=cls.rag_max_top_k,
             ),
-            rag_min_score=_read_optional_float_setting("RAG_MIN_SCORE"),
+            rag_min_score=_read_optional_float_setting(
+                "RAG_MIN_SCORE",
+                default=cls.rag_min_score,
+            ),
+            rag_max_context_chars=_read_int_setting(
+                "RAG_MAX_CONTEXT_CHARS",
+                default=cls.rag_max_context_chars,
+            ),
         )
 
     def __post_init__(self) -> None:
@@ -126,6 +134,9 @@ class Settings:
 
         if self.rag_min_score is not None and not 0 <= self.rag_min_score <= 1:
             raise ValueError("RAG_MIN_SCORE must be between zero and one.")
+
+        if self.rag_max_context_chars <= 0:
+            raise ValueError("RAG_MAX_CONTEXT_CHARS must be greater than zero.")
 
 
 def load_settings() -> Settings:
@@ -178,13 +189,17 @@ def _read_float_setting(name: str, *, default: float) -> float:
         raise ValueError(f"{name} must be a valid number.") from exc
 
 
-def _read_optional_float_setting(name: str) -> float | None:
+def _read_optional_float_setting(
+    name: str,
+    *,
+    default: float | None = None,
+) -> float | None:
     """Read an optional floating-point setting."""
 
     raw_value = os.getenv(name)
 
     if raw_value is None or not raw_value.strip():
-        return None
+        return default
 
     try:
         return float(raw_value.strip())

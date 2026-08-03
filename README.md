@@ -92,6 +92,15 @@ Configure the assistant in your local `.env` file (see `.env.example`):
 OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_MODEL=qwen3:4b
 OLLAMA_TIMEOUT_SECONDS=60
+OLLAMA_EMBEDDING_MODEL=qwen3-embedding:0.6b
+RAG_KNOWLEDGE_BASE_PATH=knowledge_base
+RAG_STORAGE_PATH=storage/rag
+RAG_CHUNK_SIZE=1000
+RAG_CHUNK_OVERLAP=150
+RAG_DEFAULT_TOP_K=4
+RAG_MAX_TOP_K=10
+RAG_MIN_SCORE=0.40
+RAG_MAX_CONTEXT_CHARS=6000
 ```
 
 Do not commit your real `.env` file.
@@ -144,19 +153,26 @@ Example response:
   "answer": "MotoStock AI...",
   "model": "qwen3:4b",
   "tools_used": [],
-  "sources": []
+  "sources": [
+    {
+      "source": "model_evaluation.md",
+      "section": "Model Selection",
+      "chunk_id": "model-evaluation-model-selection-001",
+      "score": 0.5889
+    }
+  ]
 }
 ```
 
 ### Current limitations
 
-The current assistant is connected to the local LLM, but RAG and live-data tools have not been implemented yet.
+The current assistant is connected to the local LLM and can retrieve static project documentation through a local NumPy vector index. Live-data tools have not been implemented yet.
 
 In the current version:
 
 - `tools_used` remains empty
-- `sources` remains empty
-- the assistant can answer conceptual questions about forecasting, inventory, and recommendations
+- `sources` contains retrieved document metadata when the RAG index is available
+- the assistant can answer grounded conceptual questions about forecasting, inventory, and recommendations
 - it does not query current stock levels
 - it does not query current forecasts
 - it does not query current recommendations
@@ -192,8 +208,28 @@ ollama pull qwen3-embedding:0.6b
 | `OLLAMA_EMBEDDING_MODEL` | Embedding model | `qwen3-embedding:0.6b` |
 | `RAG_CHUNK_SIZE` | Chunk size in characters | `1000` |
 | `RAG_CHUNK_OVERLAP` | Chunk overlap in characters | `150` |
+| `RAG_DEFAULT_TOP_K` | Default number of retrieved chunks | `4` |
+| `RAG_MAX_TOP_K` | Maximum number of retrieved chunks | `10` |
+| `RAG_MIN_SCORE` | Minimum cosine score used by retrieval | `0.40` |
+| `RAG_MAX_CONTEXT_CHARS` | Maximum context sent to the chat model | `6000` |
 
-`OllamaService.embed()` sends text to `POST /api/embed` and returns `list[list[float]]`. Vector search and full RAG retrieval are not implemented yet.
+`EmbeddingService` sends embeddings in batches through the shared `OllamaService`, normalizes the vectors, and validates their dimensions. `VectorStoreService` persists `embeddings.npz`, `metadata.json`, and `index_info.json` under `storage/rag/`; these generated files are ignored by Git.
+
+Build the index after installing the embedding model:
+
+```bash
+# Windows
+.venv\Scripts\python.exe -m scripts.index_knowledge_base
+
+# Linux/macOS
+python -m scripts.index_knowledge_base
+```
+
+The indexing command is idempotent and replaces the previous index. Check representative English, Portuguese, and out-of-domain queries with:
+
+```bash
+python -m scripts.check_rag_retrieval
+```
 
 ## Swagger documentation
 

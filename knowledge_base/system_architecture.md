@@ -108,7 +108,10 @@ Examples include:
 - ModelService;
 - ForecastService;
 - RecommendationService;
-- OllamaService.
+- OllamaService;
+- EmbeddingService;
+- VectorStoreService;
+- RagService.
 
 ### FastAPI Endpoints
 
@@ -116,16 +119,18 @@ The API exposes products, forecasts, stock recommendations, assistant health, an
 
 ## Knowledge Interaction Flow
 
-The planned RAG flow is:
+The RAG flow is:
 
 ```text
 User question
     ↓
-Knowledge retrieval
+EmbeddingService
     ↓
-Relevant document chunks
+VectorStoreService and cosine search
     ↓
-System prompt and retrieved context
+Relevant document chunks and source metadata
+    ↓
+System prompt, retrieved context and user question
     ↓
 Local LLM
     ↓
