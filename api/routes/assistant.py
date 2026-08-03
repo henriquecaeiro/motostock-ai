@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 
 from api.prompts import load_system_prompt
+from api.exceptions import ServiceUnavailableError
 from api.schemas.assistant import (
     AssistantErrorResponse,
     AssistantHealthResponse,
@@ -28,6 +29,14 @@ from api.services.vector_store_service import (
     VectorStoreCorruptedError,
     VectorStoreNotFoundError,
     VectorStoreValidationError,
+)
+from api.services.tool_service import (
+    ToolArgumentError,
+    ToolDataError,
+    ToolExecution,
+    ToolService,
+    UnknownToolError,
+    format_tool_execution,
 )
 
 logger = logging.getLogger(__name__)
@@ -143,6 +152,52 @@ async def assistant_chat(
             detail="The assistant configuration could not be loaded.",
         ) from exc
 
+    tool_service: ToolService | None = getattr(
+        request.app.state,
+        "tool_service",
+        None,
+    )
+    try:
+        tool_plan = tool_service.plan_query(payload.message) if tool_service else None
+    except ServiceUnavailableError as exc:
+        logger.warning("Assistant tool planning could not access business data.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Current business data is unavailable.",
+        ) from exc
+    tool_execution = None
+    tools_used: list[str] = []
+
+    if tool_plan is not None and tool_service is not None:
+        try:
+            tool_execution = tool_service.execute(
+                tool_plan.call.name,
+                tool_plan.call.arguments,
+            )
+        except (ToolArgumentError, UnknownToolError):
+            return AssistantResponse(
+                answer=(
+                    "I could not execute that current-data request because the "
+                    "product or arguments were invalid. No business value was generated."
+                ),
+                model=ollama.default_model,
+            )
+        except ToolDataError:
+            logger.warning("Assistant tool execution could not read business data.")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Current business data is unavailable.",
+            )
+
+        tools_used = [tool_execution.tool_name]
+
+        if not tool_plan.requires_rag:
+            return AssistantResponse(
+                answer=format_tool_execution(tool_execution),
+                model=ollama.default_model,
+                tools_used=tools_used,
+            )
+
     retrieval_result: RetrievalResult | None = None
     rag_service = getattr(request.app.state, "rag_service", None)
 
@@ -188,6 +243,14 @@ async def assistant_chat(
         retrieval_result=retrieval_result,
         max_context_chars=request.app.state.settings.rag_max_context_chars,
     )
+
+    if tool_execution is not None:
+        return AssistantResponse(
+            answer=_format_mixed_tool_response(tool_execution, retrieval_result),
+            model=ollama.default_model,
+            tools_used=tools_used,
+            sources=sources,
+        )
 
     try:
         answer = await ollama.ask(
@@ -325,3 +388,27 @@ def _build_assistant_prompt(
     )
 
     return prompt, sources
+
+
+def _format_mixed_tool_response(
+    tool_execution: ToolExecution,
+    retrieval_result: RetrievalResult | None,
+) -> str:
+    """Combine static retrieval references with exact current tool output."""
+
+    tool_text = format_tool_execution(tool_execution)
+
+    if retrieval_result is None or not retrieval_result.results:
+        return tool_text
+
+    documented_context = [
+        "Relevant static documentation references (not current business data):"
+    ]
+
+    for chunk in retrieval_result.results[:3]:
+        preview = " ".join(chunk.content.split())[:240]
+        documented_context.append(
+            f"- {chunk.source} / {chunk.section}: {preview}"
+        )
+
+    return "\n".join(documented_context) + "\n\n" + tool_text
