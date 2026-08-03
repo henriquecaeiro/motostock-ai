@@ -10,7 +10,7 @@ from fastapi import FastAPI
 
 from api.config import load_settings
 from api.repositories.factory import create_repository
-from api.routes import assistant, health, predictions, products, recommendations, sales
+from api.routes import assistant, health, models, predictions, products, recommendations, sales
 from api.services.embedding_service import EmbeddingService
 from api.services.forecast_service import ForecastService
 from api.services.model_service import ModelService
@@ -120,6 +120,7 @@ app.include_router(products.router)
 app.include_router(predictions.router)
 app.include_router(recommendations.router)
 app.include_router(sales.router)
+app.include_router(models.router)
 app.include_router(assistant.router)
 
 
