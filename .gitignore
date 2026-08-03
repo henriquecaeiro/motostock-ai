@@ -15,3 +15,5 @@ storage/backups/*
 artifacts/models/candidates/*
 artifacts/models/backups/*
 reports/training_runs/*
+evaluation/results/*
+!evaluation/results/.gitkeep

@@ -1,0 +1,26 @@
+[
+  {
+    "id": "rag-model-selection-en",
+    "question": "Why was XGBoost selected?",
+    "language": "en",
+    "expected_sources": ["model_evaluation.md"],
+    "expected_sections": ["Model Selection"],
+    "expected_keywords": ["MAE", "MAPE"]
+  },
+  {
+    "id": "rag-safety-stock-pt",
+    "question": "Como o estoque de seguranca e calculado?",
+    "language": "pt-BR",
+    "expected_sources": ["stock_recommendation_rules.md"],
+    "expected_sections": ["Safety Stock"],
+    "expected_keywords": ["20%", "forecasted demand"]
+  },
+  {
+    "id": "rag-architecture-en",
+    "question": "How does the local assistant use the knowledge base?",
+    "language": "en",
+    "expected_sources": ["system_architecture.md"],
+    "expected_sections": ["RAG", "Local LLM"],
+    "expected_keywords": ["retrieval", "Ollama"]
+  }
+]

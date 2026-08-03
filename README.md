@@ -106,6 +106,28 @@ evaluate it, then promote or roll it back explicitly:
 Candidates are stored outside the production artifact path. The registry keeps
 status, checksum, parameters, metrics, data interval and parent version.
 
+### Assistant evaluation
+
+The versioned evaluation cases live under `evaluation/`. Run the deterministic
+checks without Ollama:
+
+```bash
+.venv\\Scripts\\python.exe -m scripts.evaluate_assistant
+```
+
+To measure the real local assistant, including retrieval latency and source
+provenance, opt in explicitly:
+
+```bash
+.venv\\Scripts\\python.exe -m scripts.evaluate_assistant --live
+```
+
+Both modes write Markdown, CSV and JSON reports under `evaluation/results/`,
+which is intentionally ignored. Deterministic checks cover tool choice,
+arguments, invalid products/horizons, source catalog presence, missing index
+and prompt-injection handling. Live LLM answer quality and numerical
+fidelity remain manual review items rather than a fabricated accuracy score.
+
 ## Running tests
 
 ```bash
