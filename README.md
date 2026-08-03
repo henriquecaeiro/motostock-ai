@@ -166,16 +166,14 @@ Example response:
 
 ### Current limitations
 
-The current assistant is connected to the local LLM and can retrieve static project documentation through a local NumPy vector index. Live-data tools have not been implemented yet.
+The current assistant is connected to the local LLM, can retrieve static project documentation through a local NumPy vector index, and can call four read-only business tools.
 
 In the current version:
 
-- `tools_used` remains empty
+- `tools_used` lists the allowlisted tool used for current-data questions
 - `sources` contains retrieved document metadata when the RAG index is available
 - the assistant can answer grounded conceptual questions about forecasting, inventory, and recommendations
-- it does not query current stock levels
-- it does not query current forecasts
-- it does not query current recommendations
+- current values are returned directly from the internal application services
 - it must not invent current business values
 
 Automated assistant tests use mocks and do not require Ollama to be running. For a real integration check, run this command from the project root:
@@ -229,6 +227,27 @@ The indexing command is idempotent and replaces the previous index. Check repres
 
 ```bash
 python -m scripts.check_rag_retrieval
+```
+
+### Read-only assistant tools
+
+The assistant uses deterministic intent rules and an explicit allowlist instead of allowing the language model to execute arbitrary tool names or code. The available tools are:
+
+- `list_products`
+- `forecast_product`
+- `get_recommendations`
+- `get_recommendation_summary`
+
+Tool arguments are validated with Pydantic, horizons are limited to 1–30 days, product names are checked by the repository, and tool results are rendered as exact JSON returned by the application services. Tool requests do not make HTTP calls back into this API.
+
+Run the manual tool check with:
+
+```bash
+# Windows
+.venv\Scripts\python.exe -m scripts.check_assistant_tools
+
+# Linux/macOS
+python -m scripts.check_assistant_tools
 ```
 
 ## Swagger documentation

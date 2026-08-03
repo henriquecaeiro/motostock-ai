@@ -17,6 +17,7 @@ from api.services.model_service import ModelService
 from api.services.rag_service import RagService
 from api.services.ollama_service import OllamaService
 from api.services.recommendation_service import RecommendationService
+from api.services.tool_service import ToolService
 from api.services.vector_store_service import (
     VectorStoreCorruptedError,
     VectorStoreNotFoundError,
@@ -73,6 +74,11 @@ async def lifespan(app: FastAPI):
         vector_store_service,
         settings=settings,
     )
+    tool_service = ToolService(
+        repository=repository,
+        forecast_service=forecast_service,
+        recommendation_service=recommendation_service,
+    )
 
     app.state.settings = settings
     app.state.repository = repository
@@ -83,6 +89,7 @@ async def lifespan(app: FastAPI):
     app.state.embedding_service = embedding_service
     app.state.vector_store_service = vector_store_service
     app.state.rag_service = rag_service
+    app.state.tool_service = tool_service
 
     try:
         yield
