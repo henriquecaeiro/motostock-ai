@@ -122,8 +122,8 @@ def test_complete_operational_and_assistant_workflow(tmp_path, monkeypatch):
         assert rag_response.json()["sources"][0]["source"] == "system_architecture.md"
         assert rag_response.json()["tools_used"] == []
         assert tool_response.status_code == 200
-        assert tool_response.json()["tools_used"] == ["list_products"]
-        assert '"count": 12' in tool_response.json()["answer"]
+        assert tool_response.json()["tools_used"] == []
+        assert "Encontrei 12 produtos" in tool_response.json()["answer"]
 
         unknown_product = client.post(
             "/predict",

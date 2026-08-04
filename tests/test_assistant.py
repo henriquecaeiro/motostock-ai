@@ -237,6 +237,32 @@ def test_assistant_chat_system_prompt_is_passed_but_not_exposed(
     assert expected_system_prompt not in caplog.text
 
 
+def test_assistant_chat_hides_internal_tool_names_from_model_output(
+    client, monkeypatch
+):
+    ollama = _ollama_service(client)
+
+    async def mock_ask(
+        prompt,
+        *,
+        system_prompt=None,
+        model=None,
+        options=None,
+    ):
+        return "Use `get_recommendations` to inspect the current stock."
+
+    monkeypatch.setattr(ollama, "ask", mock_ask)
+
+    response = client.post(
+        "/assistant/chat",
+        json={"message": "What is MotoStock AI?"},
+    )
+
+    assert response.status_code == 200
+    assert "get_recommendations" not in response.json()["answer"]
+    assert "consulta de dados atuais" in response.json()["answer"]
+
+
 def test_assistant_chat_removes_external_whitespace(client, monkeypatch):
     """Remove unnecessary whitespace before sending the prompt."""
 

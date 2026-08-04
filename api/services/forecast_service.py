@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import logging
 
+import pandas as pd
+
 from src.forecasting import (
     ForecastingError,
     aggregate_product_forecast,
@@ -74,10 +76,23 @@ class ForecastService:
     def forecast_all_products(self, horizon_days: int):
         """Forecast demand for every known product."""
 
+        daily_sales_df = self.repository.load_daily_sales()
+
+        if daily_sales_df.empty:
+            return pd.DataFrame(
+                columns=[
+                    "product_name",
+                    "forecast_horizon_days",
+                    "forecasted_demand_raw",
+                    "forecasted_demand_non_negative",
+                    "forecasted_demand_units",
+                ]
+            )
+
         try:
             daily_forecast = build_all_product_forecasts(
                 model=self.model_service.model,
-                daily_sales_df=self.repository.load_daily_sales(),
+                daily_sales_df=daily_sales_df,
                 latest_prices=self.repository.get_latest_prices(),
                 last_historical_date=self.repository.get_last_historical_date(),
                 horizon_days=horizon_days,
@@ -102,3 +117,47 @@ class ForecastService:
         ].apply(lambda value: int(math.ceil(value)))
 
         return forecast_by_product
+
+    def get_forecast_summary(
+        self,
+        horizon_days: int = 14,
+        limit: int = 5,
+    ) -> dict:
+        """Return a deterministic, JSON-native summary for all products."""
+
+        if not 1 <= horizon_days <= 30:
+            raise ForecastingHTTPError("horizon_days must be between 1 and 30")
+
+        if not 1 <= limit <= 20:
+            raise ForecastingHTTPError("limit must be between 1 and 20")
+
+        forecast_by_product = self.forecast_all_products(horizon_days)
+        ordered = forecast_by_product.sort_values(
+            by=["forecasted_demand_units", "product_name"],
+            ascending=[False, True],
+            kind="mergesort",
+        )
+
+        top_products = [
+            {
+                "product_name": str(row["product_name"]),
+                "forecasted_demand_units": int(
+                    row["forecasted_demand_units"]
+                ),
+                "forecasted_demand_raw": float(row["forecasted_demand_raw"]),
+                "forecasted_demand_non_negative": float(
+                    row["forecasted_demand_non_negative"]
+                ),
+            }
+            for _, row in ordered.head(limit).iterrows()
+        ]
+
+        return {
+            "selected_model": self.model_service.selected_model,
+            "horizon_days": int(horizon_days),
+            "total_products": int(len(forecast_by_product)),
+            "total_forecasted_demand_units": int(
+                forecast_by_product["forecasted_demand_units"].sum()
+            ),
+            "top_products": top_products,
+        }

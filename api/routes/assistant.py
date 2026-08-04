@@ -1,6 +1,7 @@
 """AI assistant endpoints."""
 
 import logging
+import re
 
 from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import JSONResponse
@@ -166,7 +167,6 @@ async def assistant_chat(
             detail="Current business data is unavailable.",
         ) from exc
     tool_execution = None
-    tools_used: list[str] = []
 
     if tool_plan is not None and tool_service is not None:
         try:
@@ -177,8 +177,9 @@ async def assistant_chat(
         except (ToolArgumentError, UnknownToolError):
             return AssistantResponse(
                 answer=(
-                    "I could not execute that current-data request because the "
-                    "product or arguments were invalid. No business value was generated."
+                    "Não foi possível consultar os dados atuais porque o produto "
+                    "ou os parâmetros informados são inválidos. Nenhum valor de "
+                    "estoque foi inventado."
                 ),
                 model=ollama.default_model,
             )
@@ -189,13 +190,10 @@ async def assistant_chat(
                 detail="Current business data is unavailable.",
             )
 
-        tools_used = [tool_execution.tool_name]
-
         if not tool_plan.requires_rag:
             return AssistantResponse(
                 answer=format_tool_execution(tool_execution),
                 model=ollama.default_model,
-                tools_used=tools_used,
             )
 
     retrieval_result: RetrievalResult | None = None
@@ -248,7 +246,6 @@ async def assistant_chat(
         return AssistantResponse(
             answer=_format_mixed_tool_response(tool_execution, retrieval_result),
             model=ollama.default_model,
-            tools_used=tools_used,
             sources=sources,
         )
 
@@ -308,7 +305,7 @@ async def assistant_chat(
         )
 
     return AssistantResponse(
-        answer=answer,
+        answer=_sanitize_public_answer(answer),
         model=ollama.default_model,
         sources=sources,
     )
@@ -411,4 +408,27 @@ def _format_mixed_tool_response(
             f"- {chunk.source} / {chunk.section}: {preview}"
         )
 
-    return "\n".join(documented_context) + "\n\n" + tool_text
+    return _sanitize_public_answer(
+        "\n".join(documented_context) + "\n\n" + tool_text
+    )
+
+
+def _sanitize_public_answer(answer: str) -> str:
+    """Prevent internal tool identifiers from leaking through model output."""
+
+    sanitized = answer
+
+    for tool_name in (
+        "list_products",
+        "forecast_product",
+        "get_recommendations",
+        "get_recommendation_summary",
+    ):
+        sanitized = re.sub(
+            rf"`?{re.escape(tool_name)}`?",
+            "consulta de dados atuais",
+            sanitized,
+            flags=re.IGNORECASE,
+        )
+
+    return sanitized
