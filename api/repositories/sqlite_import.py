@@ -194,12 +194,12 @@ def import_csv_files(
                         """
                         INSERT INTO inventory(
                             product_id, quantity_on_hand, supplier_lead_time_days,
-                            as_of_date, source_key, created_at, updated_at
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                        ON CONFLICT(product_id, as_of_date) DO UPDATE SET
+                            as_of_date, observed_at, source_key, created_at, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(source_key) DO UPDATE SET
                             quantity_on_hand = excluded.quantity_on_hand,
                             supplier_lead_time_days = excluded.supplier_lead_time_days,
-                            source_key = excluded.source_key,
+                            observed_at = excluded.observed_at,
                             updated_at = excluded.updated_at
                         """,
                         (
@@ -207,6 +207,7 @@ def import_csv_files(
                             quantity_on_hand,
                             max(1, lead_time or 7),
                             sale_date,
+                            f"{sale_date}T00:00:00+00:00",
                             f"csv:inventory:{product_name}:{sale_date}",
                             timestamp,
                             timestamp,

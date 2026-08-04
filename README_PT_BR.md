@@ -254,6 +254,58 @@ Respostas principais:
 | 422 | Corpo, horizonte, preço, quantidade ou chave inválida. |
 | 502/503/504 | Falha controlada de Ollama, modelo, dados ou timeout. |
 
+## Integração com MotoBoy POS
+
+O MotoBoy POS é a fonte transacional de verdade para produtos, vendas e estoque
+local. Ele envia uma cópia analítica unidirecional ao MotoStock AI por meio do
+cliente Rust do Tauri; a interface React não chama a FastAPI diretamente. O
+MotoStock AI não escreve no banco do POS nem altera o estoque local.
+
+O contrato existente `POST /sales/batch` recebe itens de vendas com mapping.
+Alterações de estoque que não são vendas usam estes contratos adicionais:
+
+| Método | Endpoint | Objetivo |
+| --- | --- | --- |
+| POST | `/inventory/snapshots` | Receber uma observação de estoque com timestamp. |
+| POST | `/inventory/snapshots/batch` | Receber até 1000 observações em uma transação. |
+
+Exemplo de snapshot:
+
+```json
+{
+  "product_name": "Bag Delivery 45L",
+  "quantity_on_hand": 10,
+  "supplier_lead_time_days": 7,
+  "observed_at": "2026-08-03T18:30:00Z",
+  "external_id": "motoboy-pos:stock-movement:27",
+  "idempotency_key": "motoboy-pos:stock-movement:27"
+}
+```
+
+`product_name` precisa existir no catálogo do MotoStock. A quantidade não pode
+ser negativa, o lead time deve ser de pelo menos um dia, `observed_at` precisa
+conter fuso horário e `external_id` ou `idempotency_key` é obrigatório. Batches
+são limitados a 1000 registros e gravados em uma única transação. A resposta
+informa `inserted`, `skipped`, `updated` e `snapshot_ids`.
+
+Retries são seguros porque a chave do evento é persistida e verificada antes da
+inserção. Cada evento aceito é mantido, inclusive um evento atrasado; o
+repositório de recomendações seleciona o maior `observed_at` por produto, então
+um evento antigo não substitui um saldo mais novo. A migration 5 adiciona
+precisão de timestamp e identidade do evento sem apagar os registros antigos
+baseados apenas em data.
+
+A ordem recomendada é: inicializar/importar o SQLite do MotoStock, iniciar a
+FastAPI, confirmar `/health` e então iniciar o POS. Se a FastAPI ou o SQLite
+estiver indisponível, o POS deve manter o evento na outbox local e tentar depois.
+O serviço de IA é apenas analítico: recomendações, previsões e respostas do
+assistant são consultivas e nunca alteram o estoque do POS.
+
+Para troubleshooting, confirme que o nome mapeado aparece em `GET /products`,
+leia o detalhe HTTP seguro em erros `422` e repita erros `503` depois que a
+dependência local estiver disponível. Não copie o arquivo SQLite do POS para
+este projeto; envie eventos explícitos pela API.
+
 ## 14. Configuração do Ollama
 
 O assistente usa Ollama local, não um LLM hospedado por padrão:

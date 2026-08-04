@@ -157,6 +157,13 @@ class CsvRepository:
             "Sales ingestion requires DATA_BACKEND=sqlite."
         )
 
+    def insert_inventory_snapshots(self, records):
+        """Inventory synchronization requires the durable SQLite backend."""
+
+        raise ServiceUnavailableError(
+            "Inventory snapshot ingestion requires DATA_BACKEND=sqlite."
+        )
+
     def rebuild_modeling_data(self):
         """Feature rebuilding is intentionally a SQLite operational action."""
 
