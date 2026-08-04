@@ -22,8 +22,8 @@ def test_chat_list_products_uses_read_only_tool(client):
     payload = response.json()
 
     assert response.status_code == 200
-    assert payload["tools_used"] == ["list_products"]
-    assert '"count": 12' in payload["answer"]
+    assert payload["tools_used"] == []
+    assert "Encontrei 12 produtos" in payload["answer"]
     assert "Bag Delivery 45L" in payload["answer"]
     assert payload["sources"] == []
 
@@ -37,9 +37,10 @@ def test_chat_forecast_tool_returns_service_value_for_known_product(client):
     payload = response.json()
 
     assert response.status_code == 200
-    assert payload["tools_used"] == ["forecast_product"]
-    assert '"product_name": "Bag Delivery 45L"' in payload["answer"]
-    assert '"horizon_days": 7' in payload["answer"]
+    assert payload["tools_used"] == []
+    assert "Bag Delivery 45L" in payload["answer"]
+    assert "7 dias" in payload["answer"]
+    assert "unidades" in payload["answer"]
 
 
 def test_chat_unknown_product_does_not_invent_forecast(client):
@@ -52,7 +53,7 @@ def test_chat_unknown_product_does_not_invent_forecast(client):
 
     assert response.status_code == 200
     assert payload["tools_used"] == []
-    assert "invalid" in payload["answer"].lower()
+    assert "inválid" in payload["answer"].lower()
     assert "Unknown Product" not in payload["answer"]
 
 
@@ -66,7 +67,7 @@ def test_chat_invalid_horizon_is_rejected_without_tool_execution(client):
 
     assert response.status_code == 200
     assert payload["tools_used"] == []
-    assert "invalid" in payload["answer"].lower()
+    assert "inválid" in payload["answer"].lower()
 
 
 def test_chat_recommendation_status_filter_uses_exact_service_output(client):
@@ -78,9 +79,9 @@ def test_chat_recommendation_status_filter_uses_exact_service_output(client):
     payload = response.json()
 
     assert response.status_code == 200
-    assert payload["tools_used"] == ["get_recommendations"]
-    assert '"stock_status": "critical"' in payload["answer"]
-    assert '"recommendations": []' in payload["answer"]
+    assert payload["tools_used"] == []
+    assert "Não há produtos críticos" in payload["answer"]
+    assert "get_recommendations" not in payload["answer"]
 
 
 def test_chat_summary_uses_tool_without_rag_or_llm(client, monkeypatch):
@@ -102,8 +103,8 @@ def test_chat_summary_uses_tool_without_rag_or_llm(client, monkeypatch):
     payload = response.json()
 
     assert response.status_code == 200
-    assert payload["tools_used"] == ["get_recommendation_summary"]
-    assert '"total_recommended_purchase_units": 2' in payload["answer"]
+    assert payload["tools_used"] == []
+    assert "Unidades totais para compra recomendada: 2" in payload["answer"]
     assert payload["sources"] == []
     assert ask_called is False
 
@@ -158,6 +159,31 @@ def test_chat_mixed_question_returns_tools_and_rag_sources(client, monkeypatch):
     payload = response.json()
 
     assert response.status_code == 200
-    assert payload["tools_used"] == ["get_recommendations"]
+    assert payload["tools_used"] == []
     assert payload["sources"][0]["source"] == "stock_recommendation_rules.md"
-    assert '"recommendations"' in payload["answer"]
+    assert "get_recommendations" not in payload["answer"]
+
+
+def test_chat_portuguese_top_five_executes_current_data_internally(client, monkeypatch):
+    ollama = client.app.state.ollama_service
+    ask_called = False
+
+    async def mock_ask(prompt, *, system_prompt=None, model=None, options=None):
+        nonlocal ask_called
+        ask_called = True
+        return "não deveria ser chamado"
+
+    monkeypatch.setattr(ollama, "ask", mock_ask)
+
+    response = client.post(
+        "/assistant/chat",
+        json={"message": "Me mande a lista dos 5 produtos mais críticos."},
+    )
+
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert payload["tools_used"] == []
+    assert ask_called is False
+    assert "get_recommendations" not in payload["answer"]
+    assert "produtos críticos" in payload["answer"]

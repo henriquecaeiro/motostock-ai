@@ -38,12 +38,18 @@ class FakeRecommendationService:
             "horizon_days": kwargs["horizon_days"],
             "stock_status": kwargs.get("stock_status"),
             "product_name": kwargs.get("product_name"),
+            "count": 2,
             "recommendations": [
                 {
                     "product_name": "Bag Delivery 45L",
                     "recommended_purchase_quantity": 4,
                     "stock_status": "warning",
-                }
+                },
+                {
+                    "product_name": "Capacete LS2",
+                    "recommended_purchase_quantity": 2,
+                    "stock_status": "warning",
+                },
             ],
         }
 
@@ -98,6 +104,17 @@ def test_recommendations_tool_accepts_status_filter() -> None:
         "stock_status": "warning",
     }
     assert execution.result["recommendations"][0]["recommended_purchase_quantity"] == 4
+
+
+def test_recommendations_tool_applies_requested_limit() -> None:
+    execution = make_service().execute(
+        "get_recommendations",
+        {"horizon_days": 14, "stock_status": "critical", "limit": 1},
+    )
+
+    assert execution.arguments["limit"] == 1
+    assert execution.result["count"] == 1
+    assert len(execution.result["recommendations"]) == 1
 
 
 def test_summary_tool_returns_exact_summary() -> None:
@@ -168,6 +185,20 @@ def test_query_planner_separates_conceptual_questions_from_current_data() -> Non
     assert portuguese_plan.call.arguments["stock_status"] == "critical"
 
 
+def test_query_planner_recognizes_portuguese_top_five_critical_request() -> None:
+    plan = make_service().plan_query(
+        "Me mande a lista dos 5 produtos mais críticos."
+    )
+
+    assert plan is not None
+    assert plan.call.name == "get_recommendations"
+    assert plan.call.arguments == {
+        "horizon_days": 14,
+        "stock_status": "critical",
+        "limit": 5,
+    }
+
+
 def test_query_planner_keeps_mixed_questions_grounded() -> None:
     plan = make_service().plan_query(
         "Why is the current recommendation for Bag Delivery 45L important?"
@@ -178,7 +209,7 @@ def test_query_planner_keeps_mixed_questions_grounded() -> None:
     assert plan.requires_rag is True
 
 
-def test_tool_result_renderer_keeps_exact_json_values_visible() -> None:
+def test_tool_result_renderer_keeps_exact_values_without_internal_names() -> None:
     execution = make_service().execute(
         "forecast_product",
         {"product_name": "Bag Delivery 45L", "horizon_days": 14},
@@ -187,4 +218,5 @@ def test_tool_result_renderer_keeps_exact_json_values_visible() -> None:
     rendered = format_tool_execution(execution)
 
     assert "17" in rendered
-    assert "exact result returned by the application service" in rendered
+    assert "previsão de demanda" in rendered
+    assert "forecast_product" not in rendered

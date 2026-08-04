@@ -79,6 +79,7 @@ class GetRecommendationsArguments(BaseModel):
     horizon_days: int = Field(default=14, ge=1, le=30)
     stock_status: StockStatus | None = None
     product_name: ProductName | None = None
+    limit: int | None = Field(default=None, ge=1, le=100)
 
 
 class GetRecommendationSummaryArguments(BaseModel):
@@ -281,18 +282,31 @@ class ToolService:
             _contains_any_marker(normalized, _CURRENT_MARKERS)
             or _contains_any_marker(
                 normalized,
-                ("which", "quais", "filter", "filtro"),
+                (
+                    "which",
+                    "quais",
+                    "filter",
+                    "filtro",
+                    "lista",
+                    "listar",
+                    "mande",
+                    "envie",
+                ),
             )
         )
 
         if recommendation_requested or current_stock_question or status_filter_requested:
             arguments: dict[str, Any] = {"horizon_days": horizon_days}
+            limit = _extract_limit(message)
 
             if stock_status is not None:
                 arguments["stock_status"] = stock_status
 
             if product_name:
                 arguments["product_name"] = product_name
+
+            if limit is not None:
+                arguments["limit"] = limit
 
             return ToolPlan(
                 call=ToolCall(
@@ -356,7 +370,23 @@ class ToolService:
             return self.forecast_service.predict_product(**values)
 
         if tool_name == "get_recommendations":
-            return self.recommendation_service.get_recommendations(**values)
+            limit = values.pop("limit", None)
+            result = self.recommendation_service.get_recommendations(**values)
+
+            if limit is None or not isinstance(result, dict):
+                return result
+
+            recommendations = result.get("recommendations")
+
+            if not isinstance(recommendations, list):
+                return result
+
+            limited_recommendations = recommendations[:limit]
+            return {
+                **result,
+                "count": len(limited_recommendations),
+                "recommendations": limited_recommendations,
+            }
 
         if tool_name == "get_recommendation_summary":
             return self.recommendation_service.get_summary(**values)
@@ -427,6 +457,24 @@ def _extract_horizon_days(message: str) -> int:
     return int(match.group(1))
 
 
+def _extract_limit(message: str) -> int | None:
+    """Extract a requested result count without confusing it with a horizon."""
+
+    patterns = (
+        r"\b(?:top|lista|list)\s+(?:dos?|das?|de|of)?\s*(\d{1,3})\b",
+        r"\b(?:dos?|das?|os|as)\s+(\d{1,3})\s+(?:produtos?|itens?|products?|items?)\b",
+        r"\b(\d{1,3})\s+(?:produtos?|itens?|products?|items?)\b",
+    )
+
+    for pattern in patterns:
+        match = re.search(pattern, message, re.IGNORECASE)
+
+        if match is not None:
+            return int(match.group(1))
+
+    return None
+
+
 def _extract_stock_status(normalized_message: str) -> str | None:
     """Map Portuguese and English status words to the strict API values."""
 
@@ -472,29 +520,144 @@ def _json_safe(value: Any) -> dict[str, Any]:
 
 
 def format_tool_execution(execution: ToolExecution) -> str:
-    """Render verified tool data without allowing an LLM to change values."""
+    """Render verified business data without exposing internal tool details."""
 
-    serialized_arguments = json.dumps(
-        execution.arguments,
-        ensure_ascii=False,
-        indent=2,
-        sort_keys=True,
+    if execution.tool_name == "list_products":
+        return _format_product_list(execution.result)
+
+    if execution.tool_name == "forecast_product":
+        return _format_forecast(execution.result)
+
+    if execution.tool_name == "get_recommendations":
+        return _format_recommendations(execution)
+
+    if execution.tool_name == "get_recommendation_summary":
+        return _format_recommendation_summary(execution)
+
+    return "Os dados atuais foram consultados com sucesso."
+
+
+def _format_product_list(result: Mapping[str, Any]) -> str:
+    products = result.get("products")
+
+    if not isinstance(products, list) or not products:
+        return "Não há produtos cadastrados no momento."
+
+    count = result.get("count", len(products))
+    lines = [f"- {product}" for product in products]
+    return f"Encontrei {count} produtos cadastrados:\n" + "\n".join(lines)
+
+
+def _format_forecast(result: Mapping[str, Any]) -> str:
+    product_name = result.get("product_name", "o produto solicitado")
+    horizon_days = result.get("horizon_days", result.get("forecast_horizon_days", 14))
+    demand_units = result.get(
+        "forecasted_demand_units",
+        result.get("forecasted_demand_non_negative"),
     )
-    serialized_result = json.dumps(
-        execution.result,
-        ensure_ascii=False,
-        indent=2,
-        sort_keys=True,
-    )
+
+    if demand_units is None:
+        return f"A previsão de demanda de {product_name} foi consultada com sucesso."
 
     return (
-        f"Verified read-only tool result: {execution.tool_name}\n"
-        "Validated arguments:\n"
-        "```json\n"
-        f"{serialized_arguments}\n"
-        "```\n"
-        "The JSON below is the exact result returned by the application service.\n"
-        "```json\n"
-        f"{serialized_result}\n"
-        "```"
+        f"A previsão de demanda de {product_name} para os próximos "
+        f"{horizon_days} dias é de {demand_units} unidades."
     )
+
+
+def _format_recommendations(execution: ToolExecution) -> str:
+    recommendations = execution.result.get("recommendations")
+    stock_status = execution.arguments.get("stock_status")
+
+    if not isinstance(recommendations, list) or not recommendations:
+        if stock_status == "critical":
+            return "Não há produtos críticos no estoque no momento."
+
+        if stock_status:
+            return (
+                "Não encontrei produtos com o status "
+                f"{_stock_status_label(stock_status)} no momento."
+            )
+
+        return "Não há recomendações de estoque no momento."
+
+    title = f"Encontrei {len(recommendations)} recomendações atuais de estoque:"
+    lines = []
+
+    for index, recommendation in enumerate(recommendations, start=1):
+        if not isinstance(recommendation, Mapping):
+            continue
+
+        product_name = recommendation.get("product_name", "Produto sem nome")
+        details = []
+
+        if recommendation.get("stock_status") is not None:
+            details.append(
+                "status: "
+                + _stock_status_label(str(recommendation["stock_status"]))
+            )
+
+        if recommendation.get("current_stock") is not None:
+            details.append(f"estoque atual: {recommendation['current_stock']} unidades")
+
+        if recommendation.get("forecasted_demand_units") is not None:
+            details.append(
+                "demanda prevista: "
+                f"{recommendation['forecasted_demand_units']} unidades"
+            )
+
+        if recommendation.get("recommended_purchase_quantity") is not None:
+            details.append(
+                "compra recomendada: "
+                f"{recommendation['recommended_purchase_quantity']} unidades"
+            )
+
+        if recommendation.get("priority_score") is not None:
+            details.append(f"prioridade: {recommendation['priority_score']}")
+
+        suffix = " — " + "; ".join(details) if details else ""
+        lines.append(f"{index}. {product_name}{suffix}")
+
+    return title + "\n" + "\n".join(lines)
+
+
+def _format_recommendation_summary(execution: ToolExecution) -> str:
+    result = execution.result
+    horizon_days = result.get(
+        "forecast_horizon_days",
+        execution.arguments.get("horizon_days", 14),
+    )
+    labels = (
+        ("total_products", "Total de produtos"),
+        ("critical_products", "Produtos críticos"),
+        ("warning_products", "Produtos em alerta"),
+        ("healthy_products", "Produtos saudáveis"),
+        ("overstock_products", "Produtos com excesso de estoque"),
+        (
+            "total_recommended_purchase_units",
+            "Unidades totais para compra recomendada",
+        ),
+    )
+    lines = [f"Resumo atual do estoque para os próximos {horizon_days} dias:"]
+
+    for key, label in labels:
+        if result.get(key) is not None:
+            lines.append(f"- {label}: {result[key]}")
+
+    if result.get("highest_priority_product") is not None:
+        lines.append(
+            "- Produto com maior prioridade: "
+            f"{result['highest_priority_product']}"
+        )
+
+    return "\n".join(lines)
+
+
+def _stock_status_label(status: str) -> str:
+    labels = {
+        "critical": "crítico",
+        "warning": "em alerta",
+        "healthy": "saudável",
+        "overstock": "com excesso de estoque",
+    }
+    return labels.get(status, status)
